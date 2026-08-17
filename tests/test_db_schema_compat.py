@@ -21,6 +21,7 @@ class SchemaCompatibilityTests(unittest.TestCase):
         self.assertEqual(db.get_schema_mapping()['machines'], 'equipment.machines')
         self.assertEqual(db.get_schema_mapping()['workshops'], 'equipment.workshops')
         self.assertEqual(db.get_schema_mapping()['computer_specs'], 'equipment.computer_specs')
+        self.assertEqual(db.get_schema_mapping()['machine_maintenance'], 'equipment.machine_maintenance')
 
     def test_normalize_equipment_row_maps_computer_specs(self):
         db = DatabaseManager()
@@ -90,6 +91,36 @@ class SchemaCompatibilityTests(unittest.TestCase):
             self.assertEqual(resolved_path, target_path)
             self.assertIn('Папка найдена', message)
 
+    def test_maintenance_datetime_formatting(self):
+        from ui.detail_card_dialog import DetailCardDialog
+        self.assertEqual(DetailCardDialog._format_date(None), "—")
+        self.assertEqual(DetailCardDialog._format_date(""), "—")
+        self.assertEqual(
+            DetailCardDialog._format_date("2026-08-17 09:15:36.673941+03"),
+            "2026-08-17"
+        )
+        self.assertEqual(
+            DetailCardDialog._format_date("2011-07-11 00:00:00"),
+            "2011-07-11"
+        )
+
+    def test_get_machine_maintenance_handles_none_id(self):
+        db = DatabaseManager()
+        self.assertEqual(db.get_machine_maintenance(None), [])
+        self.assertEqual(db.get_machine_maintenance(0), [])
+
+    def test_save_machine_maintenance_handles_empty_machine_id(self):
+        db = DatabaseManager()
+        ok, msg, saved_id = db.save_machine_maintenance({'machine_id': None, 'work_type': 'Test'})
+        self.assertFalse(ok)
+        self.assertIsNone(saved_id)
+
+    def test_delete_machine_maintenance_handles_empty_id(self):
+        db = DatabaseManager()
+        ok, msg = db.delete_machine_maintenance(None)
+        self.assertFalse(ok)
+
 
 if __name__ == '__main__':
     unittest.main()
+

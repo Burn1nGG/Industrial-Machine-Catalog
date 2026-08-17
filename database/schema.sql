@@ -92,7 +92,36 @@ CREATE TABLE IF NOT EXISTS equipment.computer_specs (
 
 
 -- ============================================================
--- 5. Индексы
+-- 5. История обслуживания и неисправностей
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS equipment.machine_maintenance (
+    id BIGSERIAL PRIMARY KEY,
+
+    machine_id BIGINT NOT NULL,
+
+    work_type VARCHAR(200),
+
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    start_date TIMESTAMP WITH TIME ZONE,
+
+    end_date TIMESTAMP WITHOUT TIME ZONE,
+
+    work_performed TEXT,
+
+    notes TEXT,
+
+    CONSTRAINT fk_machine_maintenance_machine
+        FOREIGN KEY (machine_id)
+        REFERENCES equipment.machines(id)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+);
+
+
+-- ============================================================
+-- 6. Индексы
 -- ============================================================
 
 CREATE INDEX IF NOT EXISTS idx_machines_workshop_id
@@ -103,3 +132,6 @@ CREATE INDEX IF NOT EXISTS idx_machines_inventory_number
 
 CREATE INDEX IF NOT EXISTS idx_machines_machine_name
     ON equipment.machines(machine_name);
+
+CREATE INDEX IF NOT EXISTS idx_machine_maintenance_machine_id
+    ON equipment.machine_maintenance(machine_id);

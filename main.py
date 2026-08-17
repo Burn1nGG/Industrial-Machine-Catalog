@@ -22,7 +22,7 @@ def main():
     app.setOrganizationName("Industrial Systems")
 
     window = MainWindow()
-    window.show()
+    window.showMaximized()
 
     sys.exit(app.exec())
 

@@ -147,6 +147,15 @@ QPushButton#SettingsButton:hover {
     background-color: #64748B;
 }
 
+QPushButton#DeleteButton {
+    background-color: #991B1B;
+    color: #FEE2E2;
+}
+
+QPushButton#DeleteButton:hover {
+    background-color: #B91C1C;
+}
+
 /* --- TABLE WIDGET --- */
 QTableWidget {
     background-color: #0F172A;
@@ -168,11 +177,22 @@ QTableWidget::item:selected {
 QHeaderView::section {
     background-color: #1E293B;
     color: #94A3B8;
-    padding: 10px;
-    font-weight: bold;
+    padding: 8px 10px;
+    font-weight: 600;
     border: none;
+    border-right: 1px solid #334155;
     border-bottom: 2px solid #334155;
 }
+
+QHeaderView::section:hover {
+    background-color: #273549;
+    color: #38BDF8;
+}
+
+QHeaderView::section:pressed {
+    background-color: #162030;
+}
+
 
 /* --- TAB WIDGET --- */
 QTabWidget::pane {
@@ -244,5 +264,47 @@ QStatusBar {
     background-color: #090D16;
     color: #94A3B8;
     border-top: 1px solid #1E293B;
+}
+
+/* --- MAINTENANCE & FAULT LOG STYLES --- */
+#MaintenanceDetailFrame {
+    background-color: #162032;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+#MaintCountBadge {
+    background-color: #0369A1;
+    color: #E0F2FE;
+    border-radius: 10px;
+    padding: 3px 10px;
+    font-weight: bold;
+    font-size: 12px;
+}
+
+#MaintWorkTypeBadge {
+    background-color: #312E81;
+    color: #C7D2FE;
+    border: 1px solid #4338CA;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-weight: 600;
+}
+
+#MaintSectionTitle {
+    font-size: 13px;
+    font-weight: 600;
+    color: #38BDF8;
+}
+
+QTextEdit#MaintDetailText {
+    background-color: #0B1120;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    color: #E2E8F0;
+    font-size: 13px;
+    line-height: 1.4;
+    padding: 8px;
 }
 """

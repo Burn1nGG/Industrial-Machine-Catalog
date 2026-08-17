@@ -75,7 +75,8 @@ class DatabaseManager:
         return {
             "machines": "equipment.machines",
             "workshops": "equipment.workshops",
-            "computer_specs": "equipment.computer_specs"
+            "computer_specs": "equipment.computer_specs",
+            "machine_maintenance": "equipment.machine_maintenance"
         }
 
     def test_connection(self, db_cfg=None):
@@ -216,19 +217,137 @@ class DatabaseManager:
         try:
             conn = self.get_connection()
             cur = conn.cursor(cursor_factory=RealDictCursor)
-            cur.execute("SELECT to_regclass('equipment.equipment_docs')")
-            table_exists = cur.fetchone()[0]
-            if not table_exists:
+            cur.execute("SELECT to_regclass('equipment.equipment_docs') AS tbl")
+            res = cur.fetchone()
+            if not res or not res.get('tbl'):
                 cur.close()
                 conn.close()
                 return []
-            cur.execute("SELECT id, title, doc_type, file_path_or_url FROM equipment.equipment_docs WHERE equipment_id = %s;", (equipment_id,))
+            cur.execute("SELECT id, title, doc_type, file_path_or_url FROM equipment.equipment_docs WHERE equipment_id = %s;", (int(equipment_id),))
             rows = cur.fetchall()
             cur.close()
             conn.close()
             return [dict(r) for r in rows]
         except Exception:
             return []
+
+    def get_machine_maintenance(self, machine_id):
+        """Возвращает историю обслуживания и неисправностей оборудования."""
+        if not machine_id:
+            return []
+        try:
+            m_id = int(machine_id)
+        except (ValueError, TypeError):
+            return []
+
+        try:
+            conn = self.get_connection()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("SELECT to_regclass('equipment.machine_maintenance') AS tbl")
+            res = cur.fetchone()
+            if not res or not res.get('tbl'):
+                cur.close()
+                conn.close()
+                return []
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    machine_id,
+                    work_type,
+                    created_at,
+                    start_date,
+                    end_date,
+                    work_performed,
+                    notes
+                FROM equipment.machine_maintenance
+                WHERE machine_id = %s
+                ORDER BY start_date DESC NULLS LAST, id DESC;
+                """,
+                (m_id,)
+            )
+            rows = cur.fetchall()
+            cur.close()
+            conn.close()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            print(f"DB Error get_machine_maintenance: {safe_str_err(e)}")
+            return []
+
+    def save_machine_maintenance(self, maint_data):
+        """Сохраняет или создает запись в equipment.machine_maintenance."""
+        try:
+            conn = self.get_connection()
+            cur = conn.cursor()
+            record_id = maint_data.get('id')
+            machine_id = maint_data.get('machine_id')
+            work_type = maint_data.get('work_type') or ''
+            start_date = maint_data.get('start_date') or None
+            end_date = maint_data.get('end_date') or None
+            work_performed = maint_data.get('work_performed') or ''
+            notes = maint_data.get('notes') or ''
+
+            # If empty date string, convert to None
+            if isinstance(start_date, str) and (not start_date.strip() or start_date.strip() == '—'):
+                start_date = None
+            if isinstance(end_date, str) and (not end_date.strip() or end_date.strip() == '—'):
+                end_date = None
+
+            if record_id:
+                cur.execute(
+                    """
+                    UPDATE equipment.machine_maintenance SET
+                        work_type = %s,
+                        start_date = %s,
+                        end_date = %s,
+                        work_performed = %s,
+                        notes = %s
+                    WHERE id = %s
+                    RETURNING id;
+                    """,
+                    (work_type, start_date, end_date, work_performed, notes, int(record_id))
+                )
+                saved_id = cur.fetchone()[0]
+            else:
+                if not machine_id:
+                    cur.close()
+                    conn.close()
+                    return False, "Не указан станок (machine_id)", None
+
+                cur.execute(
+                    """
+                    INSERT INTO equipment.machine_maintenance (
+                        machine_id, work_type, start_date, end_date, work_performed, notes
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING id;
+                    """,
+                    (int(machine_id), work_type, start_date, end_date, work_performed, notes)
+                )
+                saved_id = cur.fetchone()[0]
+
+            conn.commit()
+            cur.close()
+            conn.close()
+            return True, "Запись обслуживания успешно сохранена в PostgreSQL!", saved_id
+        except Exception as e:
+            print(f"DB Error save_machine_maintenance: {safe_str_err(e)}")
+            return False, f"Ошибка сохранения записи ТО: {safe_str_err(e)}", None
+
+    def delete_machine_maintenance(self, record_id):
+        """Удаляет запись из equipment.machine_maintenance."""
+        if not record_id:
+            return False, "Не указан ID записи"
+        try:
+            conn = self.get_connection()
+            cur = conn.cursor()
+            cur.execute("DELETE FROM equipment.machine_maintenance WHERE id = %s;", (int(record_id),))
+            conn.commit()
+            cur.close()
+            conn.close()
+            return True, "Запись успешно удалена из PostgreSQL!"
+        except Exception as e:
+            print(f"DB Error delete_machine_maintenance: {safe_str_err(e)}")
+            return False, f"Ошибка удаления записи ТО: {safe_str_err(e)}"
 
     def save_equipment(self, eq_data):
         """Сохраняет изменения в machines и computer_specs без блокировки интерфейса."""

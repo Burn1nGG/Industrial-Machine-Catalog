@@ -1,6 +1,7 @@
 """
 Main Application Window for Industrial Equipment Catalog.
 """
+import re
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QComboBox, QPushButton, QTableWidget, QTableWidgetItem,
@@ -14,11 +15,22 @@ from ui.db_settings_dialog import DBSettingsDialog
 from ui.detail_card_dialog import DetailCardDialog
 from ui.styles import STYLESHEET
 
+TABLE_COLUMNS = [
+    {"title": "Инв. №", "width": 85, "sortable": True},
+    {"title": "Наименование станка", "width": 480, "sortable": True},
+    {"title": "Цех", "width": 90, "sortable": True},
+    {"title": "ЧПУ / Контроллер", "width": 160, "sortable": True},
+    {"title": "IP-адрес", "width": 125, "sortable": True},
+    {"title": "Статус", "width": 115, "sortable": True},
+    {"title": "Быстрые действия", "width": 215, "sortable": False},
+]
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Справочник промышленного оборудования — Поиск и Картотека станков")
         self.resize(1150, 720)
+        self.setWindowState(Qt.WindowState.WindowMaximized)
 
         # Core Modules
         self.db_manager = DatabaseManager()
@@ -156,26 +168,26 @@ class MainWindow(QMainWindow):
 
         # Table Widget
         self.table = QTableWidget()
-        self.table.setColumnCount(7)
-        self.table.setHorizontalHeaderLabels([
-            "Инв. №",
-            "Наименование станка",
-            "Цех",
-            "ЧПУ / Контроллер",
-            "IP-адрес",
-            "Статус",
-            "Быстрые действия"
-        ])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(6, 230)
+        self.table.setColumnCount(len(TABLE_COLUMNS))
+        self._update_header_labels()
+
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setMinimumSectionSize(70)
+        header.setStretchLastSection(False)
+        header.setHighlightSections(True)
+
+        for idx, col_info in enumerate(TABLE_COLUMNS):
+            self.table.setColumnWidth(idx, col_info["width"])
+            if not col_info["sortable"]:
+                header.setSectionResizeMode(idx, QHeaderView.ResizeMode.Fixed)
+
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setDefaultSectionSize(46)
         self.table.cellDoubleClicked.connect(self.on_table_double_clicked)
-        self.table.horizontalHeader().sectionClicked.connect(self.on_header_clicked)
-        self.table.horizontalHeader().setSortIndicatorShown(False)
+        header.sectionClicked.connect(self.on_header_clicked)
+        header.setSortIndicatorShown(False)
 
         results_layout.addWidget(self.table)
         main_layout.addWidget(results_frame, 1)
@@ -235,46 +247,85 @@ class MainWindow(QMainWindow):
             search_desc.append(f"Название: '{name_val}'")
 
         filt_str = ", ".join(search_desc) if search_desc else "Все записи"
-        self.update_status_bar(f"Поиск завершен [{filt_str}]. Найдено: {len(self.equipment_list)} шт.")
+        sort_desc = ""
+        if self._active_sort_column is not None and self._active_sort_column < len(TABLE_COLUMNS):
+            col_title = TABLE_COLUMNS[self._active_sort_column]["title"]
+            order_name = "по возрастанию ▲" if self._active_sort_order == Qt.SortOrder.AscendingOrder else "по убыванию ▼"
+            sort_desc = f" | Сортировка: {col_title} ({order_name})"
 
-    def _normalize_sort_value(self, value):
+        self.update_status_bar(f"Поиск завершен [{filt_str}]. Найдено: {len(self.equipment_list)} шт.{sort_desc}")
+
+    def _natural_sort_key(self, value):
+        """Естественная сортировка для чисел, строк, IP-адресов и пустых значений."""
         if value is None:
-            return ""
-        if isinstance(value, (int, float)):
-            return (0, float(value))
+            return (2, ())
         text = str(value).strip()
         if not text:
-            return ""
-        try:
-            return (0, float(text))
-        except ValueError:
-            return (1, text.lower())
+            return (2, ())
+        chunks = []
+        for part in re.split(r'(\d+)', text):
+            if part.isdigit():
+                chunks.append((0, int(part)))
+            elif part:
+                chunks.append((1, part.lower()))
+        return (0, tuple(chunks))
 
     def _get_sort_value(self, eq, column):
         if column == 0:
-            return self._normalize_sort_value(eq.get('inventory_number'))
+            return self._natural_sort_key(eq.get('inventory_number'))
         if column == 1:
-            return self._normalize_sort_value(eq.get('name'))
+            return self._natural_sort_key(eq.get('name'))
         if column == 2:
-            return self._normalize_sort_value(eq.get('workshop_name') or eq.get('workshop_code'))
+            return self._natural_sort_key(eq.get('workshop_name') or eq.get('workshop_code'))
         if column == 3:
-            return self._normalize_sort_value(eq.get('controller') or eq.get('cnc_controller'))
+            return self._natural_sort_key(eq.get('controller') or eq.get('cnc_controller'))
         if column == 4:
-            return self._normalize_sort_value(eq.get('ip_address'))
+            return self._natural_sort_key(eq.get('ip_address'))
         if column == 5:
-            return self._normalize_sort_value(eq.get('status'))
-        return self._normalize_sort_value("")
+            return self._natural_sort_key(eq.get('status'))
+        return self._natural_sort_key("")
 
     def _sort_equipment_items(self, equipment_items, column):
-        if column is None or column == 6:
+        if column is None or column >= len(TABLE_COLUMNS) or not TABLE_COLUMNS[column]["sortable"]:
             return list(equipment_items)
         reverse = self._active_sort_order == Qt.SortOrder.DescendingOrder
         return sorted(equipment_items, key=lambda eq: self._get_sort_value(eq, column), reverse=reverse)
 
+    def _update_header_labels(self):
+        """Обновляет заголовки таблицы с визуальными индикаторами направления сортировки."""
+        for idx, col_info in enumerate(TABLE_COLUMNS):
+            base_title = col_info["title"]
+            if col_info["sortable"]:
+                if self._active_sort_column == idx:
+                    arrow = " ▲" if self._active_sort_order == Qt.SortOrder.AscendingOrder else " ▼"
+                    header_text = f"{base_title}{arrow}"
+                    tooltip = f"Столбец: «{base_title}» (активна сортировка {'по возрастанию ▲' if self._active_sort_order == Qt.SortOrder.AscendingOrder else 'по убыванию ▼'}).\nНажмите для смены направления."
+                else:
+                    header_text = base_title
+                    tooltip = f"Нажмите для сортировки по столбцу «{base_title}»"
+            else:
+                header_text = base_title
+                tooltip = base_title
+
+            item = self.table.horizontalHeaderItem(idx)
+            if not item:
+                item = QTableWidgetItem(header_text)
+                self.table.setHorizontalHeaderItem(idx, item)
+            else:
+                item.setText(header_text)
+            item.setToolTip(tooltip)
+
     def display_equipment(self, equipment_items):
         items_to_display = self._sort_equipment_items(equipment_items, self._active_sort_column)
         self.table.setRowCount(0)
-        self.results_count_lbl.setText(f"Найдено оборудования: {len(equipment_items)} шт.")
+
+        sort_info = ""
+        if self._active_sort_column is not None and self._active_sort_column < len(TABLE_COLUMNS):
+            col_title = TABLE_COLUMNS[self._active_sort_column]["title"]
+            arrow = "▲" if self._active_sort_order == Qt.SortOrder.AscendingOrder else "▼"
+            sort_info = f"  •  Сортировка: «{col_title}» {arrow}"
+
+        self.results_count_lbl.setText(f"Найдено оборудования: {len(equipment_items)} шт.{sort_info}")
 
         for row_idx, eq in enumerate(items_to_display):
             self.table.insertRow(row_idx)
@@ -321,20 +372,15 @@ class MainWindow(QMainWindow):
 
     def _update_header_sort_state(self):
         header = self.table.horizontalHeader()
-        for col in range(self.table.columnCount()):
-            if col == 6:
-                continue
-            if col == self._active_sort_column:
-                header.setSectionHidden(col, False)
-                header.setSortIndicatorShown(True)
-                header.setSortIndicator(col, self._active_sort_order)
-            else:
-                header.setSortIndicatorShown(self._active_sort_column is not None)
-                if self._active_sort_column is None:
-                    header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+        if self._active_sort_column is not None and self._active_sort_column < len(TABLE_COLUMNS) and TABLE_COLUMNS[self._active_sort_column]["sortable"]:
+            header.setSortIndicatorShown(True)
+            header.setSortIndicator(self._active_sort_column, self._active_sort_order)
+        else:
+            header.setSortIndicatorShown(False)
+        self._update_header_labels()
 
     def on_header_clicked(self, column):
-        if column == 6:
+        if column >= len(TABLE_COLUMNS) or not TABLE_COLUMNS[column]["sortable"]:
             return
 
         if self._active_sort_column == column:
@@ -356,8 +402,8 @@ class MainWindow(QMainWindow):
         self._active_sort_column = None
         self._active_sort_order = Qt.SortOrder.AscendingOrder
         self._update_header_sort_state()
-        self.table.horizontalHeader().setSortIndicatorShown(False)
         self.on_search()
+
 
     def on_table_double_clicked(self, row, column):
         item = self.table.item(row, 0)
@@ -388,6 +434,7 @@ class MainWindow(QMainWindow):
 
     def open_equipment_card(self, eq_data):
         dialog = DetailCardDialog(eq_data, self.db_manager, self.folder_router, self)
+        dialog.setWindowState(Qt.WindowState.WindowMaximized)
         if dialog.exec() == DetailCardDialog.DialogCode.Accepted:
             # Обновить результаты таблицы в случае изменений
             self.on_search()
@@ -401,3 +448,28 @@ class MainWindow(QMainWindow):
     def update_status_bar(self, message):
         base_path, storage_desc = self.folder_router.get_base_archive_path()
         self.status_bar.showMessage(f"{message}  |  Сетевой архив: {storage_desc} ({base_path})")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._adjust_name_column_width()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._adjust_name_column_width()
+
+    def _adjust_name_column_width(self):
+        """Оптимизирует ширину столбца 'Наименование станка', занимая свободное пространство экрана."""
+        if not hasattr(self, 'table'):
+            return
+        total_width = self.table.viewport().width()
+        if total_width <= 0:
+            return
+        other_widths = sum(
+            self.table.columnWidth(i)
+            for i in range(self.table.columnCount())
+            if i != 1
+        )
+        remaining = total_width - other_widths
+        if remaining > TABLE_COLUMNS[1]["width"]:
+            self.table.setColumnWidth(1, remaining)
+

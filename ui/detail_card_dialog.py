@@ -2,11 +2,13 @@
 Detailed Machine Card Dialog for Industrial Equipment Catalog App.
 Tabs wrapped in QScrollArea to prevent text clipping/cropping on any resolution.
 """
+import datetime
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit,
     QPushButton, QLabel, QTabWidget, QWidget, QComboBox,
     QTableWidget, QTableWidgetItem, QHeaderView,
-    QMessageBox, QSpinBox, QFrame, QScrollArea
+    QMessageBox, QSpinBox, QFrame, QScrollArea, QTextEdit,
+    QAbstractItemView
 )
 from PySide6.QtCore import Qt
 
@@ -18,9 +20,14 @@ class DetailCardDialog(QDialog):
         self.folder_router = folder_router
         
         self.setWindowTitle(f"Подробная карточка оборудования — {self.eq_data.get('inventory_number', '')}")
-        self.resize(920, 720)
+        self.resize(1100, 750)
         self.setMinimumSize(800, 600)
+        self.setWindowState(Qt.WindowState.WindowMaximized)
         self.init_ui()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.setWindowState(Qt.WindowState.WindowMaximized)
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -217,6 +224,172 @@ class DetailCardDialog(QDialog):
         self.load_docs()
         self.tabs.addTab(self.tab3, "📁 Сетевой Архив и Файлы")
 
+        # --- TAB 4: Maintenance & Fault History ---
+        self.tab4 = QWidget()
+        tab4_layout = QVBoxLayout(self.tab4)
+        tab4_layout.setContentsMargins(14, 14, 14, 14)
+        tab4_layout.setSpacing(10)
+
+        # Tab 4 Header Bar
+        maint_header = QHBoxLayout()
+        maint_title = QLabel("🛠 Журнал технического обслуживания и неисправностей")
+        maint_title.setStyleSheet("font-size: 14px; font-weight: bold; color: #F1F5F9;")
+        
+        self.maint_count_lbl = QLabel("Записей: 0")
+        self.maint_count_lbl.setObjectName("MaintCountBadge")
+
+        self.btn_refresh_maint = QPushButton("🔄 Обновить")
+        self.btn_refresh_maint.setObjectName("ResetButton")
+        self.btn_refresh_maint.clicked.connect(self.load_maintenance)
+
+        maint_header.addWidget(maint_title)
+        maint_header.addSpacing(8)
+        maint_header.addWidget(self.maint_count_lbl)
+        maint_header.addStretch()
+        maint_header.addWidget(self.btn_refresh_maint)
+        tab4_layout.addLayout(maint_header)
+
+        # Maintenance Table
+        self.maint_table = QTableWidget()
+        self.maint_table.setColumnCount(6)
+        self.maint_table.setHorizontalHeaderLabels([
+            "ID",
+            "Начало работ",
+            "Окончание работ",
+            "Тип работы / Категория",
+            "Выполненные работы",
+            "Неисправность / Примечания"
+        ])
+        self.maint_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.maint_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.maint_table.setAlternatingRowColors(False)
+        self.maint_table.verticalHeader().setVisible(False)
+        
+        # Interactive column widths configuration
+        header = self.maint_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(True)
+        
+        self.maint_table.setColumnWidth(0, 55)
+        self.maint_table.setColumnWidth(1, 115)
+        self.maint_table.setColumnWidth(2, 115)
+        self.maint_table.setColumnWidth(3, 220)
+        self.maint_table.setColumnWidth(4, 380)
+        self.maint_table.setColumnWidth(5, 380)
+        self.maint_table.itemSelectionChanged.connect(self.on_maint_row_selected)
+
+        tab4_layout.addWidget(self.maint_table, 3)
+
+        # Detailed editing view frame for selected row / new record
+        self.maint_detail_frame = QFrame()
+        self.maint_detail_frame.setObjectName("MaintenanceDetailFrame")
+        detail_layout = QVBoxLayout(self.maint_detail_frame)
+        detail_layout.setContentsMargins(12, 10, 12, 10)
+        detail_layout.setSpacing(8)
+
+        # Detail frame toolbar / header
+        maint_detail_hdr = QHBoxLayout()
+        self.maint_detail_title = QLabel("Редактирование записи ТО")
+        self.maint_detail_title.setObjectName("MaintSectionTitle")
+        
+        self.btn_new_maint = QPushButton("➕ Добавить новую запись")
+        self.btn_new_maint.setObjectName("ResetButton")
+        self.btn_new_maint.clicked.connect(self.on_new_maint)
+
+        self.btn_save_maint = QPushButton("💾 Сохранить запись ТО")
+        self.btn_save_maint.setObjectName("SearchButton")
+        self.btn_save_maint.clicked.connect(self.on_save_maint)
+
+        self.btn_delete_maint = QPushButton("🗑 Удалить запись")
+        self.btn_delete_maint.setObjectName("DeleteButton")
+        self.btn_delete_maint.clicked.connect(self.on_delete_maint)
+
+        maint_detail_hdr.addWidget(self.maint_detail_title)
+        maint_detail_hdr.addStretch()
+        maint_detail_hdr.addWidget(self.btn_new_maint)
+        maint_detail_hdr.addWidget(self.btn_save_maint)
+        maint_detail_hdr.addWidget(self.btn_delete_maint)
+        detail_layout.addLayout(maint_detail_hdr)
+
+        # Fields row: Work Type, Start Date, End Date
+        fields_row = QHBoxLayout()
+        fields_row.setSpacing(12)
+
+        type_box = QVBoxLayout()
+        type_box.setSpacing(3)
+        type_lbl = QLabel("Тип работы / Категория:")
+        type_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #CBD5E1;")
+        self.maint_type_input = QLineEdit()
+        self.maint_type_input.setPlaceholderText("Например: Анализ ПО / Плановое ТО / Ремонт")
+        self.maint_type_input.setMinimumHeight(30)
+        type_box.addWidget(type_lbl)
+        type_box.addWidget(self.maint_type_input)
+
+        start_box = QVBoxLayout()
+        start_box.setSpacing(3)
+        start_lbl = QLabel("Начало работ (ГГГГ-ММ-ДД):")
+        start_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #CBD5E1;")
+        self.maint_start_input = QLineEdit()
+        self.maint_start_input.setPlaceholderText("2026-08-17")
+        self.maint_start_input.setMinimumHeight(30)
+        start_box.addWidget(start_lbl)
+        start_box.addWidget(self.maint_start_input)
+
+        end_box = QVBoxLayout()
+        end_box.setSpacing(3)
+        end_lbl = QLabel("Окончание работ (ГГГГ-ММ-ДД):")
+        end_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #CBD5E1;")
+        self.maint_end_input = QLineEdit()
+        self.maint_end_input.setPlaceholderText("2026-08-17")
+        self.maint_end_input.setMinimumHeight(30)
+        end_box.addWidget(end_lbl)
+        end_box.addWidget(self.maint_end_input)
+
+        fields_row.addLayout(type_box, 2)
+        fields_row.addLayout(start_box, 1)
+        fields_row.addLayout(end_box, 1)
+        detail_layout.addLayout(fields_row)
+
+        text_boxes_layout = QHBoxLayout()
+        text_boxes_layout.setSpacing(10)
+
+        # Left box: Notes / Issue description (Editable)
+        notes_box = QVBoxLayout()
+        notes_box.setSpacing(4)
+        notes_lbl = QLabel("⚠️ Неисправность / Исходная задача (notes):")
+        notes_lbl.setStyleSheet("font-weight: 600; font-size: 12px; color: #FBBF24;")
+        self.maint_notes_view = QTextEdit()
+        self.maint_notes_view.setObjectName("MaintDetailText")
+        self.maint_notes_view.setReadOnly(False)
+        self.maint_notes_view.setPlaceholderText("Введите описание неисправности, ошибки, отсутствующих компонентов или исходную задачу...")
+        self.maint_notes_view.setMinimumHeight(95)
+        notes_box.addWidget(notes_lbl)
+        notes_box.addWidget(self.maint_notes_view)
+
+        # Right box: Work performed / Result (Editable)
+        work_box = QVBoxLayout()
+        work_box.setSpacing(4)
+        work_lbl = QLabel("⚙️ Выполненные работы / Результат (work_performed):")
+        work_lbl.setStyleSheet("font-weight: 600; font-size: 12px; color: #34D399;")
+        self.maint_work_view = QTextEdit()
+        self.maint_work_view.setObjectName("MaintDetailText")
+        self.maint_work_view.setReadOnly(False)
+        self.maint_work_view.setPlaceholderText("Введите описание выполненных работ, замененных деталей, статус восстановления...")
+        self.maint_work_view.setMinimumHeight(95)
+        work_box.addWidget(work_lbl)
+        work_box.addWidget(self.maint_work_view)
+
+        text_boxes_layout.addLayout(notes_box, 1)
+        text_boxes_layout.addLayout(work_box, 1)
+        detail_layout.addLayout(text_boxes_layout)
+
+        tab4_layout.addWidget(self.maint_detail_frame, 2)
+
+        self.current_maint_id = None
+        self.maintenance_records = []
+        self.load_maintenance()
+        self.tabs.addTab(self.tab4, "🛠 История обслуживания и неисправностей")
+
         main_layout.addWidget(self.tabs, 1)
 
         # Action Buttons Layout
@@ -265,6 +438,168 @@ class DetailCardDialog(QDialog):
             self.docs_table.setItem(row_idx, 1, QTableWidgetItem(doc.get('doc_type', '')))
             self.docs_table.setItem(row_idx, 2, QTableWidgetItem(doc.get('file_path_or_url', '')))
 
+    @staticmethod
+    def _format_date(dt_val):
+        if not dt_val:
+            return "—"
+        if isinstance(dt_val, str):
+            # Extract date YYYY-MM-DD
+            cleaned = dt_val.split("T")[0].split(" ")[0].strip()
+            return cleaned if cleaned else "—"
+        try:
+            return dt_val.strftime("%Y-%m-%d")
+        except Exception:
+            return str(dt_val).split(" ")[0]
+
+    _format_dt = _format_date
+
+    def load_maintenance(self, target_id=None):
+        machine_id = self.eq_data.get('id')
+        if not machine_id:
+            self.maint_table.setRowCount(0)
+            self.maint_count_lbl.setText("Записей: 0")
+            self.maint_detail_title.setText("Нет данных")
+            self.maint_type_input.clear()
+            self.maint_start_input.clear()
+            self.maint_end_input.clear()
+            self.maint_notes_view.clear()
+            self.maint_work_view.clear()
+            self.btn_delete_maint.setEnabled(False)
+            return
+
+        self.maintenance_records = self.db_manager.get_machine_maintenance(machine_id)
+        count = len(self.maintenance_records)
+        self.maint_count_lbl.setText(f"Записей: {count}")
+        self.maint_table.setRowCount(count)
+
+        selected_row_idx = 0 if count > 0 else -1
+
+        for row_idx, rec in enumerate(self.maintenance_records):
+            rec_id = str(rec.get('id') or '')
+            if target_id and rec.get('id') == target_id:
+                selected_row_idx = row_idx
+
+            start_d = self._format_date(rec.get('start_date'))
+            end_d = self._format_date(rec.get('end_date'))
+            w_type = str(rec.get('work_type') or '—')
+            w_perf = str(rec.get('work_performed') or '').replace('\n', ' ')
+            notes = str(rec.get('notes') or '').replace('\n', ' ')
+
+            item_id = QTableWidgetItem(rec_id)
+            item_id.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_start = QTableWidgetItem(start_d)
+            item_start.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_end = QTableWidgetItem(end_d)
+            item_end.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_type = QTableWidgetItem(w_type)
+            item_perf = QTableWidgetItem(w_perf)
+            item_notes = QTableWidgetItem(notes)
+
+            self.maint_table.setItem(row_idx, 0, item_id)
+            self.maint_table.setItem(row_idx, 1, item_start)
+            self.maint_table.setItem(row_idx, 2, item_end)
+            self.maint_table.setItem(row_idx, 3, item_type)
+            self.maint_table.setItem(row_idx, 4, item_perf)
+            self.maint_table.setItem(row_idx, 5, item_notes)
+
+        if selected_row_idx >= 0:
+            self.maint_table.selectRow(selected_row_idx)
+        else:
+            self.current_maint_id = None
+            self.maint_detail_title.setText("Записей об обслуживании и неисправностях не найдено")
+            self.maint_type_input.clear()
+            self.maint_start_input.clear()
+            self.maint_end_input.clear()
+            self.maint_notes_view.clear()
+            self.maint_work_view.clear()
+            self.btn_delete_maint.setEnabled(False)
+
+    def on_maint_row_selected(self):
+        selected_rows = self.maint_table.selectionModel().selectedRows()
+        if not selected_rows:
+            return
+        row_idx = selected_rows[0].row()
+        if 0 <= row_idx < len(self.maintenance_records):
+            rec = self.maintenance_records[row_idx]
+            self.current_maint_id = rec.get('id')
+            w_type = rec.get('work_type', '')
+            start_d = self._format_date(rec.get('start_date'))
+            end_d = self._format_date(rec.get('end_date'))
+
+            self.maint_detail_title.setText(f"Редактирование записи #{self.current_maint_id}")
+            self.maint_type_input.setText(w_type if w_type != '—' else '')
+            self.maint_start_input.setText(start_d if start_d != '—' else '')
+            self.maint_end_input.setText(end_d if end_d != '—' else '')
+            self.maint_notes_view.setPlainText(rec.get('notes') or '')
+            self.maint_work_view.setPlainText(rec.get('work_performed') or '')
+            self.btn_delete_maint.setEnabled(True)
+
+    def on_new_maint(self):
+        self.maint_table.clearSelection()
+        self.current_maint_id = None
+        today_str = datetime.date.today().strftime('%Y-%m-%d')
+        self.maint_type_input.clear()
+        self.maint_start_input.setText(today_str)
+        self.maint_end_input.setText(today_str)
+        self.maint_notes_view.clear()
+        self.maint_work_view.clear()
+        self.maint_detail_title.setText("✨ Новая запись технического обслуживания")
+        self.btn_delete_maint.setEnabled(False)
+        self.maint_type_input.setFocus()
+
+    def on_save_maint(self, show_msg=True):
+        w_type = self.maint_type_input.text().strip()
+        s_date = self.maint_start_input.text().strip()
+        e_date = self.maint_end_input.text().strip()
+        notes = self.maint_notes_view.toPlainText().strip()
+        work = self.maint_work_view.toPlainText().strip()
+
+        if not any([w_type, s_date, e_date, notes, work]):
+            if show_msg:
+                QMessageBox.warning(self, "Внимание", "Заполните данные для сохранения записи ТО.")
+            return True, "Нет данных"
+
+        maint_data = {
+            'id': self.current_maint_id,
+            'machine_id': self.eq_data.get('id'),
+            'work_type': w_type,
+            'start_date': s_date if s_date and s_date != '—' else None,
+            'end_date': e_date if e_date and e_date != '—' else None,
+            'notes': notes,
+            'work_performed': work
+        }
+
+        success, msg, saved_id = self.db_manager.save_machine_maintenance(maint_data)
+        if success:
+            self.current_maint_id = saved_id
+            self.load_maintenance(target_id=saved_id)
+            if show_msg:
+                QMessageBox.information(self, "Сохранено", msg)
+            return True, msg
+        else:
+            if show_msg:
+                QMessageBox.critical(self, "Ошибка сохранения", msg)
+            return False, msg
+
+    def on_delete_maint(self):
+        if not self.current_maint_id:
+            QMessageBox.warning(self, "Внимание", "Выберите запись для удаления.")
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Подтверждение удаления",
+            f"Вы действительно хотите удалить запись ТО #{self.current_maint_id} из базы данных?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            success, msg = self.db_manager.delete_machine_maintenance(self.current_maint_id)
+            if success:
+                QMessageBox.information(self, "Удалено", msg)
+                self.load_maintenance()
+            else:
+                QMessageBox.critical(self, "Ошибка", msg)
+
     def on_open_folder(self):
         self.eq_data['sub_folder'] = self.sub_folder_input.text().strip()
         found, path, msg = self.folder_router.resolve_equipment_folder(self.eq_data)
@@ -308,14 +643,20 @@ class DetailCardDialog(QDialog):
             'antivirus': self.antivirus_input.text().strip(),
         }
 
+        # Save machine general data
         success, msg = self.db_manager.save_equipment(updated_data)
-        if success:
-            QMessageBox.information(
-                self,
-                "Сохранено",
-                f"{msg}\n\nИзменения записаны в PostgreSQL и будут доступны при следующем открытии карточки."
-            )
-            self.eq_data.update(updated_data)
-            self.accept()
-        else:
+        if not success:
             QMessageBox.critical(self, "Ошибка сохранения", msg)
+            return
+
+        # Also save active maintenance record if present
+        if self.maint_type_input.text().strip() or self.maint_notes_view.toPlainText().strip() or self.maint_work_view.toPlainText().strip():
+            self.on_save_maint(show_msg=False)
+
+        QMessageBox.information(
+            self,
+            "Сохранено",
+            f"{msg}\n\nВсе изменения оборудования и журнала обслуживания сохранены в PostgreSQL."
+        )
+        self.eq_data.update(updated_data)
+        self.accept()

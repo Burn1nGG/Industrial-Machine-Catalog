@@ -2,15 +2,139 @@
 Detailed Machine Card Dialog for Industrial Equipment Catalog App.
 Tabs wrapped in QScrollArea to prevent text clipping/cropping on any resolution.
 """
+import os
 import datetime
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit,
     QPushButton, QLabel, QTabWidget, QWidget, QComboBox,
     QTableWidget, QTableWidgetItem, QHeaderView,
     QMessageBox, QSpinBox, QFrame, QScrollArea, QTextEdit,
-    QAbstractItemView
+    QAbstractItemView, QStackedWidget
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal, QSize
+from PySide6.QtGui import QPixmap, QImage, QCursor
+
+
+class ImageViewerDialog(QDialog):
+    """Полноразмерный просмотр фотографии станка с возможностью открытия в Windows Explorer."""
+    def __init__(self, photo_path, machine_name="", inv_num="", folder_router=None, parent=None):
+        super().__init__(parent)
+        self.photo_path = photo_path
+        self.machine_name = machine_name
+        self.inv_num = inv_num
+        self.folder_router = folder_router
+        
+        self.setWindowTitle(f"Фото станка: {self.inv_num} — {self.machine_name}")
+        self.resize(1000, 750)
+        self.setMinimumSize(600, 450)
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        # Header toolbar
+        hdr_frame = QFrame()
+        hdr_frame.setObjectName("HeaderFrame")
+        hdr_layout = QHBoxLayout(hdr_frame)
+        hdr_layout.setContentsMargins(10, 8, 10, 8)
+
+        info_box = QVBoxLayout()
+        info_box.setSpacing(2)
+        title_lbl = QLabel(f"📷 {self.machine_name} (Инв. № {self.inv_num})")
+        title_lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #38BDF8;")
+        path_lbl = QLabel(self.photo_path or "Путь не указан")
+        path_lbl.setStyleSheet("font-size: 11px; color: #94A3B8;")
+        path_lbl.setWordWrap(True)
+        info_box.addWidget(title_lbl)
+        info_box.addWidget(path_lbl)
+        hdr_layout.addLayout(info_box, 1)
+
+        self.btn_system_open = QPushButton("🖼 Открыть в Windows")
+        self.btn_system_open.setObjectName("ResetButton")
+        self.btn_system_open.clicked.connect(self.on_system_open)
+
+        self.btn_folder = QPushButton("📁 Открыть папку «Фото»")
+        self.btn_folder.setObjectName("FolderButton")
+        self.btn_folder.clicked.connect(self.on_open_folder)
+
+        self.btn_close = QPushButton("Закрыть")
+        self.btn_close.setObjectName("ResetButton")
+        self.btn_close.clicked.connect(self.accept)
+
+        hdr_layout.addWidget(self.btn_system_open)
+        hdr_layout.addWidget(self.btn_folder)
+        hdr_layout.addWidget(self.btn_close)
+        layout.addWidget(hdr_frame)
+
+        # Scroll area for large image
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setStyleSheet("background-color: #070B14; border-radius: 6px;")
+
+        self.img_lbl = QLabel()
+        self.img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.img_lbl.setStyleSheet("background-color: #070B14;")
+
+        if self.photo_path and os.path.isfile(self.photo_path):
+            pixmap = QPixmap(self.photo_path)
+            if not pixmap.isNull():
+                self.img_lbl.setPixmap(pixmap)
+            else:
+                self.img_lbl.setText("Не удалось загрузить изображение")
+                self.img_lbl.setStyleSheet("color: #EF4444; font-size: 15px; font-weight: bold;")
+        else:
+            self.img_lbl.setText("Файл фотографии не найден")
+            self.img_lbl.setStyleSheet("color: #EF4444; font-size: 15px; font-weight: bold;")
+
+        self.scroll_area.setWidget(self.img_lbl)
+        layout.addWidget(self.scroll_area, 1)
+
+    def on_system_open(self):
+        if self.photo_path and os.path.isfile(self.photo_path):
+            try:
+                os.startfile(os.path.normpath(self.photo_path))
+            except Exception as e:
+                QMessageBox.warning(self, "Ошибка", f"Не удалось открыть файл:\n{e}")
+
+    def on_open_folder(self):
+        if self.photo_path:
+            folder = os.path.dirname(self.photo_path)
+            if self.folder_router:
+                self.folder_router.open_folder_in_explorer(folder, create_if_missing=False)
+            elif os.path.exists(folder):
+                try:
+                    os.startfile(os.path.normpath(folder))
+                except Exception as e:
+                    QMessageBox.warning(self, "Ошибка", f"Не удалось открыть папку:\n{e}")
+
+
+class PhotoLoaderThread(QThread):
+    """Асинхронная загрузка фотографии станка для мгновенного отклика интерфейса."""
+    loaded = Signal(bool, str, str, object)  # found, photo_path, message, QImage or None
+
+    def __init__(self, folder_router, eq_data):
+        super().__init__()
+        self.folder_router = folder_router
+        self.eq_data = dict(eq_data)
+
+    def run(self):
+        try:
+            found, photo_path, photo_folder, msg = self.folder_router.resolve_equipment_photo(self.eq_data)
+            if found and photo_path and os.path.isfile(photo_path):
+                img = QImage()
+                if img.load(photo_path):
+                    self.loaded.emit(True, photo_path, msg, img)
+                    return
+                else:
+                    self.loaded.emit(False, photo_path, "Не удалось декодировать файл изображения", None)
+                    return
+            self.loaded.emit(False, photo_path or "", msg, None)
+        except Exception as e:
+            self.loaded.emit(False, "", str(e), None)
+
 
 class DetailCardDialog(QDialog):
     def __init__(self, equipment_dict, db_manager, folder_router, parent=None):
@@ -19,11 +143,21 @@ class DetailCardDialog(QDialog):
         self.db_manager = db_manager
         self.folder_router = folder_router
         
-        self.setWindowTitle(f"Подробная карточка оборудования — {self.eq_data.get('inventory_number', '')}")
-        self.resize(1100, 750)
-        self.setMinimumSize(800, 600)
+        self.current_photo_path = None
+        self.current_photo_folder = None
+        self.current_qimage = None
+        self.current_pixmap = None
+        self._photo_thread = None
+
+        inv_num = self.eq_data.get('inventory_number', '')
+        eq_name = self.eq_data.get('name', 'Без названия')
+        self.setWindowTitle(f"Карточка станка: {inv_num} — {eq_name}")
+        self.resize(1150, 780)
+        self.setMinimumSize(850, 620)
         self.setWindowState(Qt.WindowState.WindowMaximized)
+        
         self.init_ui()
+        self.start_photo_load()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -31,66 +165,218 @@ class DetailCardDialog(QDialog):
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(14, 14, 14, 14)
+        main_layout.setContentsMargins(12, 12, 12, 12)
         main_layout.setSpacing(10)
 
-        # Header Frame
-        header_frame = QFrame()
-        header_frame.setObjectName("HeaderFrame")
-        header_layout = QHBoxLayout(header_frame)
-        header_layout.setContentsMargins(14, 10, 14, 10)
-        
-        title_box = QVBoxLayout()
-        name_lbl = QLabel(self.eq_data.get('name', 'Без названия'))
-        name_lbl.setStyleSheet("font-size: 19px; font-weight: bold; color: #38BDF8;")
-        name_lbl.setWordWrap(True)
-
-        sub_lbl = QLabel(f"Инв. №: {self.eq_data.get('inventory_number', '-')}   |   Контроллер: {self.eq_data.get('controller', '-')}   |   Цех: {self.eq_data.get('workshop_name', '-')}")
-        sub_lbl.setStyleSheet("font-size: 13px; color: #94A3B8;")
-        sub_lbl.setWordWrap(True)
-
-        title_box.addWidget(name_lbl)
-        title_box.addWidget(sub_lbl)
-        
-        header_layout.addLayout(title_box)
-        header_layout.addStretch()
-
-        # Status badge
-        status = self.eq_data.get('status', 'В работе')
-        status_lbl = QLabel(status)
-        if status == 'В работе':
-            status_lbl.setObjectName("StatusPillWork")
-        elif status == 'На обслуживании':
-            status_lbl.setObjectName("StatusPillMaint")
-        elif status == 'Резерв':
-            status_lbl.setObjectName("StatusPillReserve")
-        else:
-            status_lbl.setObjectName("StatusPillDecomm")
-        
-        header_layout.addWidget(status_lbl)
-        main_layout.addWidget(header_frame)
-
-        # Tab Widget
+        # Tab Widget (placed directly at the top so other tabs have maximum vertical space)
         self.tabs = QTabWidget()
 
-        # --- TAB 1: General & Tech Specs (with Scroll Area) ---
+        # =========================================================================
+        # --- TAB 1: General & Tech Specs + Machine Photo (with Scroll Area) ---
+        # =========================================================================
         self.tab1_scroll = QScrollArea()
         self.tab1_scroll.setWidgetResizable(True)
         self.tab1_scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         self.tab1 = QWidget()
-        tab1_layout = QFormLayout(self.tab1)
-        tab1_layout.setContentsMargins(16, 16, 16, 16)
+        tab1_layout = QVBoxLayout(self.tab1)
+        tab1_layout.setContentsMargins(14, 14, 14, 14)
         tab1_layout.setSpacing(12)
+
+        # 1. Top Header Banner inside Tab 1
+        tab1_header_card = QFrame()
+        tab1_header_card.setObjectName("HeaderFrame")
+        tab1_header_layout = QHBoxLayout(tab1_header_card)
+        tab1_header_layout.setContentsMargins(14, 10, 14, 10)
+
+        title_box = QVBoxLayout()
+        title_box.setSpacing(4)
+        self.tab1_name_lbl = QLabel(self.eq_data.get('name', 'Без названия'))
+        self.tab1_name_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #38BDF8;")
+        self.tab1_name_lbl.setWordWrap(True)
+
+        inv_val = self.eq_data.get('inventory_number', '-')
+        ctrl_val = self.eq_data.get('controller', '-')
+        ws_val = self.eq_data.get('workshop_name', '-')
+        self.tab1_sub_lbl = QLabel(f"Инв. №: {inv_val}   |   ЧПУ / Контроллер: {ctrl_val}   |   Цех: {ws_val}")
+        self.tab1_sub_lbl.setStyleSheet("font-size: 12px; color: #94A3B8;")
+        self.tab1_sub_lbl.setWordWrap(True)
+
+        title_box.addWidget(self.tab1_name_lbl)
+        title_box.addWidget(self.tab1_sub_lbl)
+        tab1_header_layout.addLayout(title_box, 1)
+
+        # Status badge pill
+        initial_status = self.eq_data.get('status', 'В работе')
+        self.tab1_status_lbl = QLabel(initial_status)
+        self._apply_status_style(self.tab1_status_lbl, initial_status)
+        tab1_header_layout.addWidget(self.tab1_status_lbl, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        tab1_layout.addWidget(tab1_header_card)
+
+        # 2. Main Two-Column Row: Left = Photo Card, Right = Tech Specs Form
+        content_row = QHBoxLayout()
+        content_row.setSpacing(14)
+
+        # --- LEFT: Machine Photo Card ---
+        self.photo_card = QFrame()
+        self.photo_card.setObjectName("PhotoCardFrame")
+        self.photo_card.setMinimumWidth(380)
+        self.photo_card.setMaximumWidth(450)
+        photo_card_layout = QVBoxLayout(self.photo_card)
+        photo_card_layout.setContentsMargins(12, 12, 12, 12)
+        photo_card_layout.setSpacing(10)
+
+        # Photo card header
+        photo_hdr = QHBoxLayout()
+        photo_title = QLabel("📷 Внешний вид станка")
+        photo_title.setStyleSheet("font-size: 14px; font-weight: bold; color: #F1F5F9;")
+        self.btn_refresh_photo = QPushButton("🔄")
+        self.btn_refresh_photo.setObjectName("ResetButton")
+        self.btn_refresh_photo.setToolTip("Перепроверить и обновить фотографию станка")
+        self.btn_refresh_photo.setFixedSize(32, 30)
+        self.btn_refresh_photo.clicked.connect(self.start_photo_load)
+
+        photo_hdr.addWidget(photo_title)
+        photo_hdr.addStretch()
+        photo_hdr.addWidget(self.btn_refresh_photo)
+        photo_card_layout.addLayout(photo_hdr)
+
+        # Stacked display: Loading (0), Photo (1), Placeholder (2)
+        self.photo_stack = QStackedWidget()
+        self.photo_stack.setMinimumHeight(350)
+
+        # Page 0: Loading
+        self.page_loading = QFrame()
+        self.page_loading.setObjectName("PhotoPlaceholderFrame")
+        p0_layout = QVBoxLayout(self.page_loading)
+        p0_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_load_icon = QLabel("⏳")
+        lbl_load_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_load_icon.setStyleSheet("font-size: 36px;")
+        lbl_load_text = QLabel("Поиск и загрузка фотографии...")
+        lbl_load_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_load_text.setStyleSheet("font-size: 13px; color: #94A3B8; font-weight: 600;")
+        p0_layout.addWidget(lbl_load_icon)
+        p0_layout.addWidget(lbl_load_text)
+        self.photo_stack.addWidget(self.page_loading)
+
+        # Page 1: Loaded Photo
+        self.page_photo = QWidget()
+        p1_layout = QVBoxLayout(self.page_photo)
+        p1_layout.setContentsMargins(0, 0, 0, 0)
+        p1_layout.setSpacing(8)
+
+        self.photo_img_lbl = QLabel()
+        self.photo_img_lbl.setObjectName("PhotoImageLabel")
+        self.photo_img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.photo_img_lbl.setMinimumHeight(280)
+        self.photo_img_lbl.setMaximumHeight(350)
+        self.photo_img_lbl.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.photo_img_lbl.setToolTip("Нажмите для полноразмерного просмотра")
+        self.photo_img_lbl.mousePressEvent = self.on_photo_clicked
+        p1_layout.addWidget(self.photo_img_lbl, 1)
+
+        # Photo action buttons
+        photo_btn_row = QHBoxLayout()
+        photo_btn_row.setSpacing(8)
+        self.btn_view_full = QPushButton("🔍 В полный размер")
+        self.btn_view_full.setObjectName("PhotoActionButton")
+        self.btn_view_full.clicked.connect(self.on_open_full_image)
+
+        self.btn_open_photo_folder = QPushButton("📁 Папка «Фото»")
+        self.btn_open_photo_folder.setObjectName("PhotoActionButton")
+        self.btn_open_photo_folder.clicked.connect(self.on_open_photo_folder)
+
+        photo_btn_row.addWidget(self.btn_view_full)
+        photo_btn_row.addWidget(self.btn_open_photo_folder)
+        p1_layout.addLayout(photo_btn_row)
+        self.photo_stack.addWidget(self.page_photo)
+
+        # Page 2: Placeholder ("Без фото")
+        self.page_placeholder = QFrame()
+        self.page_placeholder.setObjectName("PhotoPlaceholderFrame")
+        p2_layout = QVBoxLayout(self.page_placeholder)
+        p2_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        p2_layout.setSpacing(8)
+
+        icon_lbl = QLabel("📷")
+        icon_lbl.setObjectName("PhotoPlaceholderIcon")
+        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        title_ph = QLabel("Фотография отсутствует")
+        title_ph.setObjectName("PhotoPlaceholderTitle")
+        title_ph.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        desc_ph = QLabel("В папке оборудования не найден файл main.jpg")
+        desc_ph.setObjectName("PhotoPlaceholderDesc")
+        desc_ph.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        desc_ph.setWordWrap(True)
+
+        self.expected_photo_path_lbl = QLabel()
+        self.expected_photo_path_lbl.setObjectName("PhotoPathBox")
+        self.expected_photo_path_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.expected_photo_path_lbl.setWordWrap(True)
+
+        btn_ph_row = QVBoxLayout()
+        btn_ph_row.setSpacing(6)
+        self.btn_open_eq_folder_for_photo = QPushButton("📁 Открыть папку оборудования")
+        self.btn_open_eq_folder_for_photo.setObjectName("FolderButton")
+        self.btn_open_eq_folder_for_photo.clicked.connect(self.on_open_folder)
+
+        self.btn_recheck_photo = QPushButton("🔄 Проверить наличие main.jpg")
+        self.btn_recheck_photo.setObjectName("PhotoActionButton")
+        self.btn_recheck_photo.clicked.connect(self.start_photo_load)
+
+        btn_ph_row.addWidget(self.btn_open_eq_folder_for_photo)
+        btn_ph_row.addWidget(self.btn_recheck_photo)
+
+        p2_layout.addStretch()
+        p2_layout.addWidget(icon_lbl)
+        p2_layout.addWidget(title_ph)
+        p2_layout.addWidget(desc_ph)
+        p2_layout.addWidget(self.expected_photo_path_lbl)
+        p2_layout.addSpacing(6)
+        p2_layout.addLayout(btn_ph_row)
+        p2_layout.addStretch()
+        self.photo_stack.addWidget(self.page_placeholder)
+
+        photo_card_layout.addWidget(self.photo_stack, 1)
+
+        # Status text at the bottom of the photo card
+        self.photo_status_lbl = QLabel()
+        self.photo_status_lbl.setStyleSheet("font-size: 11px; color: #64748B;")
+        self.photo_status_lbl.setWordWrap(True)
+        photo_card_layout.addWidget(self.photo_status_lbl)
+
+        content_row.addWidget(self.photo_card, 0)
+
+        # --- RIGHT: Technical Specs Form Card ---
+        specs_card = QFrame()
+        specs_card.setObjectName("CardContentFrame")
+        specs_card_layout = QVBoxLayout(specs_card)
+        specs_card_layout.setContentsMargins(16, 14, 16, 14)
+        specs_card_layout.setSpacing(12)
+
+        specs_header = QLabel("⚙️ Технические характеристики и привязка к архиву")
+        specs_header.setStyleSheet("font-size: 14px; font-weight: bold; color: #F1F5F9;")
+        specs_card_layout.addWidget(specs_header)
+
+        tab1_form = QFormLayout()
+        tab1_form.setContentsMargins(0, 4, 0, 4)
+        tab1_form.setSpacing(12)
 
         self.inv_input = QLineEdit(str(self.eq_data.get('inventory_number', '')))
         self.inv_input.setMinimumHeight(32)
+        self.inv_input.textChanged.connect(self._on_header_inputs_changed)
 
         self.name_input = QLineEdit(str(self.eq_data.get('name', '')))
         self.name_input.setMinimumHeight(32)
+        self.name_input.textChanged.connect(self._on_header_inputs_changed)
 
         self.controller_input = QLineEdit(str(self.eq_data.get('controller', '')))
         self.controller_input.setMinimumHeight(32)
+        self.controller_input.textChanged.connect(self._on_header_inputs_changed)
 
         self.year_input = QSpinBox()
         self.year_input.setMinimumHeight(32)
@@ -107,27 +393,50 @@ class DetailCardDialog(QDialog):
             if ws['id'] == curr_ws_id:
                 selected_idx = idx
         self.workshop_combo.setCurrentIndex(selected_idx)
+        self.workshop_combo.currentIndexChanged.connect(self._on_header_inputs_changed)
 
         self.status_combo = QComboBox()
         self.status_combo.setMinimumHeight(32)
         self.status_combo.addItems(['В работе', 'На обслуживании', 'Резерв', 'Списан'])
-        self.status_combo.setCurrentText(status)
+        self.status_combo.setCurrentText(initial_status)
+        self.status_combo.currentTextChanged.connect(self._on_status_changed)
 
         self.folder_path_input = QLineEdit(str(self.eq_data.get('folder_path', self.eq_data.get('sub_folder', ''))))
         self.folder_path_input.setMinimumHeight(32)
+        self.folder_path_input.setPlaceholderText("Относительный или прямой путь к папке станка в архиве")
 
-        tab1_layout.addRow("Инвентарный номер:", self.inv_input)
-        tab1_layout.addRow("Название станка:", self.name_input)
-        tab1_layout.addRow("Контроллер / ЧПУ:", self.controller_input)
-        tab1_layout.addRow("Год ввода в эксплуатацию:", self.year_input)
-        tab1_layout.addRow("Цех размещения:", self.workshop_combo)
-        tab1_layout.addRow("Статус:", self.status_combo)
-        tab1_layout.addRow("Путь к папке архива:", self.folder_path_input)
+        tab1_form.addRow("Инвентарный номер:", self.inv_input)
+        tab1_form.addRow("Название станка:", self.name_input)
+        tab1_form.addRow("Контроллер / ЧПУ:", self.controller_input)
+        tab1_form.addRow("Год ввода в эксплуатацию:", self.year_input)
+        tab1_form.addRow("Цех размещения:", self.workshop_combo)
+        tab1_form.addRow("Статус оборудования:", self.status_combo)
+        tab1_form.addRow("Путь к папке архива:", self.folder_path_input)
 
+        specs_card_layout.addLayout(tab1_form)
+
+        # Folder status and quick open
+        self.folder_status_lbl = QLabel("Поиск расположения папки...")
+        self.folder_status_lbl.setStyleSheet("font-size: 12px; font-weight: bold; color: #CBD5E1;")
+        self.folder_status_lbl.setWordWrap(True)
+        specs_card_layout.addWidget(self.folder_status_lbl)
+
+        btn_folder_action = QPushButton("📁 Открыть папку оборудования в Windows Explorer")
+        btn_folder_action.setObjectName("FolderButton")
+        btn_folder_action.setStyleSheet("font-size: 13px; padding: 9px;")
+        btn_folder_action.clicked.connect(self.on_open_folder)
+        specs_card_layout.addWidget(btn_folder_action)
+
+        specs_card_layout.addStretch()
+        content_row.addWidget(specs_card, 1)
+
+        tab1_layout.addLayout(content_row)
         self.tab1_scroll.setWidget(self.tab1)
         self.tabs.addTab(self.tab1_scroll, "⚙ Технические данные")
 
+        # =========================================================================
         # --- TAB 2: IT & Software (with Scroll Area) ---
+        # =========================================================================
         self.tab2_scroll = QScrollArea()
         self.tab2_scroll.setWidgetResizable(True)
         self.tab2_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -173,25 +482,26 @@ class DetailCardDialog(QDialog):
         self.tab2_scroll.setWidget(self.tab2)
         self.tabs.addTab(self.tab2_scroll, "💻 Сеть и Софт")
 
+        # =========================================================================
         # --- TAB 3: Documentation & Storage ---
+        # =========================================================================
         self.tab3 = QWidget()
         tab3_layout = QVBoxLayout(self.tab3)
         tab3_layout.setContentsMargins(16, 16, 16, 16)
         tab3_layout.setSpacing(12)
 
-        # Storage info card
         storage_card = QFrame()
         storage_card.setObjectName("CardContentFrame")
         sc_layout = QVBoxLayout(storage_card)
         sc_layout.setSpacing(10)
         
-        self.folder_status_lbl = QLabel("Поиск расположения папки...")
-        self.folder_status_lbl.setStyleSheet("font-size: 13px; font-weight: bold; color: #CBD5E1;")
-        self.folder_status_lbl.setWordWrap(True)
+        self.tab3_folder_status_lbl = QLabel("Поиск расположения папки...")
+        self.tab3_folder_status_lbl.setStyleSheet("font-size: 13px; font-weight: bold; color: #CBD5E1;")
+        self.tab3_folder_status_lbl.setWordWrap(True)
         
         self.sub_folder_input = QLineEdit(str(self.eq_data.get('sub_folder', '')))
         self.sub_folder_input.setMinimumHeight(32)
-        self.sub_folder_input.setPlaceholderText("Например: INV-001042_Токарно-карусельный")
+        self.sub_folder_input.setPlaceholderText("Например: New Archive\\Цех 02 (ЗСКА)\\1895_...")
         
         sf_layout = QHBoxLayout()
         sf_lbl = QLabel("Папка оборудования:")
@@ -204,10 +514,9 @@ class DetailCardDialog(QDialog):
         self.btn_open_explorer.setStyleSheet("font-size: 14px; padding: 10px;")
         self.btn_open_explorer.clicked.connect(self.on_open_folder)
 
-        sc_layout.addWidget(self.folder_status_lbl)
+        sc_layout.addWidget(self.tab3_folder_status_lbl)
         sc_layout.addLayout(sf_layout)
         sc_layout.addWidget(self.btn_open_explorer)
-
         tab3_layout.addWidget(storage_card)
 
         # Docs table
@@ -224,7 +533,9 @@ class DetailCardDialog(QDialog):
         self.load_docs()
         self.tabs.addTab(self.tab3, "📁 Сетевой Архив и Файлы")
 
+        # =========================================================================
         # --- TAB 4: Maintenance & Fault History ---
+        # =========================================================================
         self.tab4 = QWidget()
         tab4_layout = QVBoxLayout(self.tab4)
         tab4_layout.setContentsMargins(14, 14, 14, 14)
@@ -233,7 +544,7 @@ class DetailCardDialog(QDialog):
         # Tab 4 Header Bar
         maint_header = QHBoxLayout()
         maint_title = QLabel("🛠 Журнал технического обслуживания и неисправностей")
-        maint_title.setStyleSheet("font-size: 14px; font-weight: bold; color: #F1F5F9;")
+        maint_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #F1F5F9;")
         
         self.maint_count_lbl = QLabel("Записей: 0")
         self.maint_count_lbl.setObjectName("MaintCountBadge")
@@ -266,9 +577,9 @@ class DetailCardDialog(QDialog):
         self.maint_table.verticalHeader().setVisible(False)
         
         # Interactive column widths configuration
-        header = self.maint_table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setStretchLastSection(True)
+        m_hdr = self.maint_table.horizontalHeader()
+        m_hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        m_hdr.setStretchLastSection(True)
         
         self.maint_table.setColumnWidth(0, 55)
         self.maint_table.setColumnWidth(1, 115)
@@ -362,7 +673,7 @@ class DetailCardDialog(QDialog):
         self.maint_notes_view.setObjectName("MaintDetailText")
         self.maint_notes_view.setReadOnly(False)
         self.maint_notes_view.setPlaceholderText("Введите описание неисправности, ошибки, отсутствующих компонентов или исходную задачу...")
-        self.maint_notes_view.setMinimumHeight(95)
+        self.maint_notes_view.setMinimumHeight(105)
         notes_box.addWidget(notes_lbl)
         notes_box.addWidget(self.maint_notes_view)
 
@@ -375,7 +686,7 @@ class DetailCardDialog(QDialog):
         self.maint_work_view.setObjectName("MaintDetailText")
         self.maint_work_view.setReadOnly(False)
         self.maint_work_view.setPlaceholderText("Введите описание выполненных работ, замененных деталей, статус восстановления...")
-        self.maint_work_view.setMinimumHeight(95)
+        self.maint_work_view.setMinimumHeight(105)
         work_box.addWidget(work_lbl)
         work_box.addWidget(self.maint_work_view)
 
@@ -392,7 +703,7 @@ class DetailCardDialog(QDialog):
 
         main_layout.addWidget(self.tabs, 1)
 
-        # Action Buttons Layout
+        # Action Buttons Layout at bottom of dialog
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
         
@@ -418,15 +729,182 @@ class DetailCardDialog(QDialog):
         # Check folder path on start
         self.update_folder_status()
 
-    def update_folder_status(self):
-        found, path, msg = self.folder_router.resolve_equipment_folder(self.eq_data)
-        if found:
-            self.folder_status_lbl.setText(f"✔ Статус папки: {msg}\nПуть: {path}")
-            self.folder_status_lbl.setStyleSheet("color: #34D399; font-weight: bold;")
-        else:
-            self.folder_status_lbl.setText(f"⚠️ Статус папки: {msg}")
-            self.folder_status_lbl.setStyleSheet("color: #FBBF24; font-weight: bold;")
+        # Apply role-based access permissions
+        self.apply_permissions()
+        auth = getattr(self.db_manager, 'auth_manager', None)
+        if auth and hasattr(auth, 'user_changed'):
+            auth.user_changed.connect(self.apply_permissions)
 
+    def apply_permissions(self):
+        """Ограничение редактирования и удаления для пользователей в режиме только для чтения."""
+        auth = getattr(self.db_manager, 'auth_manager', None)
+        can_edit = auth.can_edit() if auth else True
+        can_delete = auth.can_delete() if auth else True
+
+        # General and technical specs inputs
+        for inp in (
+            self.inv_input, self.name_input, self.folder_path_input,
+            self.controller_input, self.ip_input, self.mac_input,
+            self.screen_input, self.processor_input, self.ram_input,
+            self.rom_input, self.os_input, self.antivirus_input
+        ):
+            inp.setReadOnly(not can_edit)
+
+        self.workshop_combo.setEnabled(can_edit)
+        self.year_input.setEnabled(can_edit)
+        self.status_combo.setEnabled(can_edit)
+
+        # Bottom save button
+        self.btn_save.setEnabled(can_edit)
+        if can_edit:
+            self.btn_save.setToolTip("Сохранить изменения карточки станка в базе данных")
+        else:
+            self.btn_save.setToolTip("Требуется авторизация с правами редактора для сохранения")
+
+        # Maintenance controls
+        self.btn_new_maint.setEnabled(can_edit)
+        self.btn_save_maint.setEnabled(can_edit)
+        self.btn_delete_maint.setEnabled(can_delete and self.current_maint_id is not None)
+
+        self.maint_type_input.setReadOnly(not can_edit)
+        self.maint_start_input.setReadOnly(not can_edit)
+        self.maint_end_input.setReadOnly(not can_edit)
+        self.maint_notes_view.setReadOnly(not can_edit)
+        self.maint_work_view.setReadOnly(not can_edit)
+
+    # =========================================================================
+    # --- PHOTO LOGIC & HELPERS ---
+    # =========================================================================
+    def start_photo_load(self):
+        """Запускает поиск и загрузку фото в фоновом потоке без блокировки GUI."""
+        self.photo_stack.setCurrentIndex(0)  # Show loading
+        self.photo_status_lbl.setText("Поиск фотографии main.jpg...")
+
+        # Синхронизируем актуальные значения из полей перед поиском
+        current_eq = dict(self.eq_data)
+        current_eq['sub_folder'] = self.folder_path_input.text().strip() if hasattr(self, 'folder_path_input') else current_eq.get('sub_folder', '')
+        current_eq['folder_path'] = current_eq['sub_folder']
+        current_eq['inventory_number'] = self.inv_input.text().strip() if hasattr(self, 'inv_input') else current_eq.get('inventory_number', '')
+        current_eq['name'] = self.name_input.text().strip() if hasattr(self, 'name_input') else current_eq.get('name', '')
+
+        self._photo_thread = PhotoLoaderThread(self.folder_router, current_eq)
+        self._photo_thread.loaded.connect(self._on_photo_loaded)
+        self._photo_thread.start()
+
+    def _on_photo_loaded(self, found, photo_path, message, qimage):
+        self.current_photo_path = photo_path
+        self.current_photo_folder = os.path.dirname(photo_path) if photo_path else None
+        self.current_qimage = qimage
+
+        if found and qimage and not qimage.isNull():
+            self.current_pixmap = QPixmap.fromImage(qimage)
+            self._render_photo()
+            self.photo_stack.setCurrentIndex(1)  # Loaded
+            self.photo_status_lbl.setText(f"✔ Фото: {os.path.basename(photo_path)}")
+            self.photo_status_lbl.setStyleSheet("font-size: 11px; color: #34D399;")
+        else:
+            self.current_pixmap = None
+            self.expected_photo_path_lbl.setText(photo_path or "Путь к фото не сформирован")
+            self.photo_stack.setCurrentIndex(2)  # Placeholder
+            self.photo_status_lbl.setText(f"⚠️ {message}")
+            self.photo_status_lbl.setStyleSheet("font-size: 11px; color: #FBBF24;")
+
+    def _render_photo(self):
+        if self.current_pixmap and not self.current_pixmap.isNull():
+            lbl_w = max(self.photo_img_lbl.width(), 360)
+            lbl_h = max(self.photo_img_lbl.height(), 280)
+            scaled = self.current_pixmap.scaled(
+                QSize(lbl_w, lbl_h),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.photo_img_lbl.setPixmap(scaled)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.current_pixmap and self.photo_stack.currentIndex() == 1:
+            self._render_photo()
+
+    def on_photo_clicked(self, event):
+        self.on_open_full_image()
+
+    def on_open_full_image(self):
+        if not self.current_photo_path or not os.path.isfile(self.current_photo_path):
+            QMessageBox.information(self, "Фотография отсутствует", "Файл фотографии не найден на сетевом накопителе.")
+            return
+        inv_str = self.inv_input.text().strip()
+        name_str = self.name_input.text().strip()
+        dlg = ImageViewerDialog(self.current_photo_path, name_str, inv_str, self.folder_router, self)
+        dlg.exec()
+
+    def on_open_photo_folder(self):
+        if not self.current_photo_folder:
+            self.on_open_folder()
+            return
+        self.folder_router.open_folder_in_explorer(self.current_photo_folder)
+
+    def _on_header_inputs_changed(self):
+        """Динамически обновляет заголовки в карточке при редактировании пользователем."""
+        inv_txt = self.inv_input.text().strip() or '-'
+        name_txt = self.name_input.text().strip() or 'Без названия'
+        ctrl_txt = self.controller_input.text().strip() or '-'
+        ws_txt = self.workshop_combo.currentText() or '-'
+
+        self.tab1_name_lbl.setText(name_txt)
+        self.tab1_sub_lbl.setText(f"Инв. №: {inv_txt}   |   ЧПУ / Контроллер: {ctrl_txt}   |   Цех: {ws_txt}")
+        self.setWindowTitle(f"Карточка станка: {inv_txt} — {name_txt}")
+
+    def _on_status_changed(self, new_status):
+        self._apply_status_style(self.tab1_status_lbl, new_status)
+
+    @staticmethod
+    def _apply_status_style(label, status):
+        label.setText(status)
+        if status == 'В работе':
+            label.setObjectName("StatusPillWork")
+        elif status == 'На обслуживании':
+            label.setObjectName("StatusPillMaint")
+        elif status == 'Резерв':
+            label.setObjectName("StatusPillReserve")
+        else:
+            label.setObjectName("StatusPillDecomm")
+        # Force stylesheet refresh on dynamic change
+        label.style().unpolish(label)
+        label.style().polish(label)
+
+    # =========================================================================
+    # --- STORAGE & FOLDER STATUS ---
+    # =========================================================================
+    def update_folder_status(self):
+        temp_data = dict(self.eq_data)
+        if hasattr(self, 'folder_path_input') and self.folder_path_input.text().strip():
+            temp_data['sub_folder'] = self.folder_path_input.text().strip()
+            temp_data['folder_path'] = self.folder_path_input.text().strip()
+
+        found, path, msg = self.folder_router.resolve_equipment_folder(temp_data)
+        text = f"📁 Сетевой путь: {path}"
+        style = "color: #38BDF8; font-weight: bold;"
+
+        self.folder_status_lbl.setText(text)
+        self.folder_status_lbl.setStyleSheet(style)
+        if hasattr(self, 'tab3_folder_status_lbl'):
+            self.tab3_folder_status_lbl.setText(text)
+            self.tab3_folder_status_lbl.setStyleSheet(style)
+
+    def on_open_folder(self):
+        target_path = self.folder_path_input.text().strip() if hasattr(self, 'folder_path_input') else ''
+        if not target_path and hasattr(self, 'sub_folder_input'):
+            target_path = self.sub_folder_input.text().strip()
+
+        self.eq_data['sub_folder'] = target_path
+        self.eq_data['folder_path'] = target_path
+        found, path, msg = self.folder_router.resolve_equipment_folder(self.eq_data)
+        if path:
+            self.folder_router.open_folder_in_explorer(path)
+
+    # =========================================================================
+    # --- DOCUMENTATION LOGIC ---
+    # =========================================================================
     def load_docs(self):
         eq_id = self.eq_data.get('id')
         if not eq_id:
@@ -438,12 +916,14 @@ class DetailCardDialog(QDialog):
             self.docs_table.setItem(row_idx, 1, QTableWidgetItem(doc.get('doc_type', '')))
             self.docs_table.setItem(row_idx, 2, QTableWidgetItem(doc.get('file_path_or_url', '')))
 
+    # =========================================================================
+    # --- MAINTENANCE JOURNAL LOGIC ---
+    # =========================================================================
     @staticmethod
     def _format_date(dt_val):
         if not dt_val:
             return "—"
         if isinstance(dt_val, str):
-            # Extract date YYYY-MM-DD
             cleaned = dt_val.split("T")[0].split(" ")[0].strip()
             return cleaned if cleaned else "—"
         try:
@@ -532,9 +1012,15 @@ class DetailCardDialog(QDialog):
             self.maint_end_input.setText(end_d if end_d != '—' else '')
             self.maint_notes_view.setPlainText(rec.get('notes') or '')
             self.maint_work_view.setPlainText(rec.get('work_performed') or '')
-            self.btn_delete_maint.setEnabled(True)
+            auth = getattr(self.db_manager, 'auth_manager', None)
+            can_delete = auth.can_delete() if auth else True
+            self.btn_delete_maint.setEnabled(can_delete)
 
     def on_new_maint(self):
+        auth = getattr(self.db_manager, 'auth_manager', None)
+        if auth and not auth.can_edit():
+            QMessageBox.warning(self, "Доступ ограничен", "Для создания записи ТО требуется войти с правами редактора.")
+            return
         self.maint_table.clearSelection()
         self.current_maint_id = None
         today_str = datetime.date.today().strftime('%Y-%m-%d')
@@ -548,6 +1034,12 @@ class DetailCardDialog(QDialog):
         self.maint_type_input.setFocus()
 
     def on_save_maint(self, show_msg=True):
+        auth = getattr(self.db_manager, 'auth_manager', None)
+        if auth and not auth.can_edit():
+            if show_msg:
+                QMessageBox.warning(self, "Доступ ограничен", "Для сохранения записи ТО требуется войти с правами редактора.")
+            return False, "Отказано в доступе"
+
         w_type = self.maint_type_input.text().strip()
         s_date = self.maint_start_input.text().strip()
         e_date = self.maint_end_input.text().strip()
@@ -582,6 +1074,11 @@ class DetailCardDialog(QDialog):
             return False, msg
 
     def on_delete_maint(self):
+        auth = getattr(self.db_manager, 'auth_manager', None)
+        if auth and not auth.can_delete():
+            QMessageBox.warning(self, "Доступ ограничен", "Для удаления записи ТО требуется войти с правами редактора или администратора.")
+            return
+
         if not self.current_maint_id:
             QMessageBox.warning(self, "Внимание", "Выберите запись для удаления.")
             return
@@ -600,26 +1097,15 @@ class DetailCardDialog(QDialog):
             else:
                 QMessageBox.critical(self, "Ошибка", msg)
 
-    def on_open_folder(self):
-        self.eq_data['sub_folder'] = self.sub_folder_input.text().strip()
-        found, path, msg = self.folder_router.resolve_equipment_folder(self.eq_data)
-        success, open_msg = self.folder_router.open_folder_in_explorer(path, create_if_missing=False)
-        if not success:
-            reply = QMessageBox.question(
-                self,
-                "Папка не найдена",
-                f"{open_msg}\n\nЖелаете создать данную папку на диске?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            if reply == QMessageBox.StandardButton.Yes:
-                ok, c_msg = self.folder_router.open_folder_in_explorer(path, create_if_missing=True)
-                if ok:
-                    QMessageBox.information(self, "Успешно", f"Папка создана и открыта:\n{path}")
-                else:
-                    QMessageBox.critical(self, "Ошибка", c_msg)
-        self.update_folder_status()
-
+    # =========================================================================
+    # --- SAVE ENTIRE EQUIPMENT ---
+    # =========================================================================
     def on_save(self):
+        auth = getattr(self.db_manager, 'auth_manager', None)
+        if auth and not auth.can_edit():
+            QMessageBox.warning(self, "Доступ ограничен", "Для сохранения изменений станка требуется войти с правами редактора или администратора.")
+            return
+
         updated_data = {
             'id': self.eq_data.get('id'),
             'inventory_number': self.inv_input.text().strip(),

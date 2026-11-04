@@ -1,19 +1,22 @@
 """
 Folder Router module for Industrial Equipment Catalog.
-Resolves equipment folders on network drive S:\\New Archive or UNC path \\\\100.76.39.21\\Share_folder\\New Archive
-and opens Windows Explorer at the exact machine directory.
+Optimized for instant network folder navigation and machine card loading.
+Constructs direct UNC paths: \\\\Synology_DS423\\Share_folder\\ + DB folder_path
+without blocking network scans or UI freezes.
 """
 import os
 import subprocess
 import platform
 
+
 class FolderRouter:
     def __init__(self, storage_config=None):
         if storage_config is None:
             storage_config = {
+                "unc_path": "\\\\Synology_DS423\\Share_folder",
+                "unc_path_alt": "\\\\100.76.39.21\\Share_folder",
+                "unc_path_ip": "\\\\192.168.1.68\\Share_folder",
                 "network_drive_path": "S:\\New Archive",
-                "unc_path": "\\\\100.76.39.21\\Share_folder",
-                "unc_path_alt": "\\\\192.168.1.68\\Share_folder",
                 "fallback_local_path": "",
                 "path_mode": 1,
             }
@@ -40,167 +43,166 @@ class FolderRouter:
             return relative_path
         if not relative_path:
             return base_path
-        if relative_path.startswith("\\") or relative_path.startswith("/"):
-            return os.path.normpath(os.path.join(base_path, relative_path.lstrip('\\/')))
-        return os.path.normpath(os.path.join(base_path, relative_path))
+
+        # Если путь уже абсолютный или сетевой UNC
+        if relative_path.startswith('\\\\') or relative_path.startswith('//') or os.path.isabs(relative_path):
+            return os.path.normpath(relative_path)
+
+        norm_base = os.path.normpath(base_path)
+        norm_rel = os.path.normpath(relative_path).lstrip('\\/')
+
+        # Устранение дублирования, если базовый путь оканчивается на ту же папку, с которой начинается относительный
+        # Например: base = S:\New Archive, rel = New Archive\Цех 02\...
+        base_parts = [p for p in norm_base.split(os.sep) if p]
+        rel_parts = [p for p in norm_rel.split(os.sep) if p]
+        if base_parts and rel_parts and base_parts[-1].lower() == rel_parts[0].lower():
+            return os.path.normpath(os.path.join(norm_base, *rel_parts[1:]))
+
+        return os.path.normpath(os.path.join(norm_base, norm_rel))
 
     def get_base_archive_path(self, force_recheck=False):
-        """Проверяет доступность сетевого диска S: или UNC пути с кэшированием результатов."""
+        r"""
+        Возвращает базовый сетевой путь к хранилищу:
+        1. Режим 1: локальная сеть (\\Synology_DS423\Share_folder)
+        2. Режим 2: удалённый доступ / VPN (\\100.76.39.21\Share_folder или диск S:)
+        Возвращает путь мгновенно без блокирующих сетевых проверок и зависаний.
+        """
         if not force_recheck and self._cached_base_path is not None:
             return self._cached_base_path, self._cached_desc
 
+        unc_path = self.config.get("unc_path", "\\\\Synology_DS423\\Share_folder")
+        unc_path_alt = self.config.get("unc_path_alt", "\\\\100.76.39.21\\Share_folder")
         drive_path = self.config.get("network_drive_path", "S:\\New Archive")
-        unc_path = self.config.get("unc_path", "\\\\100.76.39.21\\Share_folder")
-        unc_path_alt = self.config.get("unc_path_alt", "\\\\192.168.1.68\\Share_folder")
-        fallback_path = self.config.get("fallback_local_path", "")
         path_mode = int(self.config.get("path_mode", 1))
 
-        preferred_unc = unc_path if path_mode == 1 else unc_path_alt
+        if path_mode == 2:
+            base = unc_path_alt or drive_path or unc_path
+            desc = f"Удалённый архив ({base})"
+        else:
+            base = unc_path or unc_path_alt or drive_path
+            desc = f"Synology DS423 ({base})"
 
-        # 1. Быстрая проверка диска S:
-        try:
-            if os.path.exists(drive_path):
-                self._cached_base_path = drive_path
-                self._cached_desc = "Сетевой диск S: (удалённое подключение)"
-                return drive_path, "Сетевой диск S: (удалённое подключение)"
-        except Exception:
-            pass
+        self._cached_base_path = os.path.normpath(base)
+        self._cached_desc = desc
+        return self._cached_base_path, self._cached_desc
 
-        try:
-            if preferred_unc and os.path.exists(preferred_unc):
-                self._cached_base_path = preferred_unc
-                self._cached_desc = f"UNC Сетевая папка {preferred_unc}"
-                return preferred_unc, f"UNC Сетевая папка {preferred_unc}"
-        except Exception:
-            pass
-
-        try:
-            if unc_path and os.path.exists(unc_path):
-                self._cached_base_path = unc_path
-                self._cached_desc = f"UNC Сетевая папка {unc_path}"
-                return unc_path, f"UNC Сетевая папка {unc_path}"
-        except Exception:
-            pass
-
-        try:
-            if unc_path_alt and os.path.exists(unc_path_alt):
-                self._cached_base_path = unc_path_alt
-                self._cached_desc = f"UNC Сетевая папка {unc_path_alt}"
-                return unc_path_alt, f"UNC Сетевая папка {unc_path_alt}"
-        except Exception:
-            pass
-
-        # 3. Проверка локального резервного пути
-        try:
-            if fallback_path and os.path.exists(fallback_path):
-                self._cached_base_path = fallback_path
-                self._cached_desc = "Локальный архив"
-                return fallback_path, "Локальный архив"
-        except Exception:
-            pass
-
-        # 4. Если ничего недоступно, возвращаем предпочтительный путь для сообщений
-        self._cached_base_path = drive_path
-        self._cached_desc = "Сетевой архив недоступен"
-        return drive_path, "Сетевой архив недоступен"
-
-    def resolve_equipment_folder(self, equipment_dict):
+    def resolve_equipment_folder(self, equipment_dict, check_exists=True):
+        r"""
+        Мгновенно формирует путь к папке станка без алгоритмического поиска и сканирования.
+        Сетевой путь (\\Synology_DS423\Share_folder\) + folder_path из БД.
         """
-        Ищет папку станка по структуре:
-        BaseArchive / WorkshopFolder / [EquipmentFolder]
-        """
-        base_path, status_desc = self.get_base_archive_path()
+        base_path, _ = self.get_base_archive_path()
+        sub_folder = self._normalize_folder_path_value(
+            equipment_dict.get('folder_path'),
+            equipment_dict.get('sub_folder')
+        )
+
+        if sub_folder:
+            full_path = self._build_full_folder_path(base_path, sub_folder)
+            if check_exists:
+                try:
+                    if os.path.exists(full_path):
+                        return True, full_path, "Папка найдена по пути из базы данных"
+                except Exception:
+                    pass
+                return False, full_path, f"Папка оборудования еще не создана по пути: {full_path}"
+            return True, full_path, "Папка найдена по пути из базы данных"
+
+        # Если в БД путь не заполнен (редкий случай)
         inv_num = self._normalize_folder_path_value(equipment_dict.get('inventory_number'))
         eq_name = self._normalize_folder_path_value(equipment_dict.get('name'))
-        sub_folder = self._normalize_folder_path_value(
-            equipment_dict.get('sub_folder'),
-            equipment_dict.get('folder_path')
-        )
-        workshop_name = self._normalize_folder_path_value(equipment_dict.get('workshop_name'))
-        workshop_code = self._normalize_folder_path_value(equipment_dict.get('workshop_code'))
+        ws_name = self._normalize_folder_path_value(equipment_dict.get('workshop_name'))
+        default_folder_name = f"{inv_num}_{eq_name}".strip('_')
+        expected_path = os.path.normpath(os.path.join(base_path, "New Archive", ws_name, default_folder_name))
 
-        if not base_path or not os.path.exists(base_path):
-            return False, base_path, f"Базовый каталог архива недоступен ({base_path})."
-
-        base_path = os.path.normpath(base_path)
-
-        if sub_folder:
-            candidate_paths = []
-            if os.path.isabs(sub_folder) or sub_folder.startswith('\\\\') or sub_folder.startswith('//'):
-                candidate_paths.append(os.path.normpath(sub_folder))
-            else:
-                candidate_paths.append(self._build_full_folder_path(base_path, sub_folder))
-                candidate_paths.append(sub_folder)
-
-            for candidate in candidate_paths:
-                try:
-                    if candidate and os.path.exists(candidate):
-                        return True, candidate, "Папка найдена по пути из базы"
-                except Exception:
-                    continue
-
-        # Шаг 1: Ищем папку цеха на первом уровне
-        workshop_dir = None
-        try:
-            for item in os.listdir(base_path):
-                full_item = os.path.join(base_path, item)
-                if os.path.isdir(full_item):
-                    if (workshop_name and workshop_name.lower() in item.lower()) or \
-                       (workshop_code and workshop_code.lower() in item.lower()) or \
-                       (workshop_name and item.lower() in workshop_name.lower()):
-                        workshop_dir = full_item
-                        break
-        except Exception as e:
-            print(f"Error reading base archive directory: {e}")
-
-        search_root = workshop_dir if workshop_dir else base_path
-
-        if sub_folder:
-            relative_candidate = os.path.normpath(os.path.join(search_root, sub_folder))
+        if check_exists:
             try:
-                if os.path.exists(relative_candidate):
-                    return True, relative_candidate, "Папка найдена по пути из базы"
+                if os.path.exists(expected_path):
+                    return True, expected_path, "Папка найдена"
             except Exception:
                 pass
-
-        try:
-            for root, dirs, files in os.walk(search_root, topdown=True):
-                rel_depth = len(os.path.relpath(root, search_root).split(os.sep))
-                if rel_depth > 2:
-                    dirs.clear()
-                    continue
-
-                for d in dirs:
-                    d_lower = d.lower()
-                    if inv_num and inv_num.lower() in d_lower:
-                        return True, os.path.join(root, d), "Папка найдена по инвентарному номеру"
-
-                    if eq_name and eq_name.lower() in d_lower:
-                        return True, os.path.join(root, d), "Папка найдена по названию станка"
-        except Exception as e:
-            print(f"Error walking directory {search_root}: {e}")
-
-        if workshop_dir and os.path.exists(workshop_dir):
-            return False, workshop_dir, f"Папка станка '{inv_num}' не найдена. Открыта общая папка цеха."
-
-        default_folder_name = f"{inv_num}_{eq_name}".replace(' ', '_')
-        expected_path = os.path.join(search_root, default_folder_name)
         return False, expected_path, f"Папка оборудования еще не создана по пути: {expected_path}"
 
     def open_folder_in_explorer(self, folder_path, create_if_missing=False):
-        """Открывает указанную папку в Windows Explorer."""
-        try:
-            if not os.path.exists(folder_path):
-                if create_if_missing:
-                    os.makedirs(folder_path, exist_ok=True)
-                else:
-                    return False, f"Директория не существует:\n{folder_path}"
+        """
+        Открывает указанную сетевую папку в Windows Explorer мгновенно и без зависаний GUI.
+        Запускает explorer.exe асинхронно отдельным процессом.
+        """
+        if not folder_path:
+            return False, "Путь к папке не указан."
 
+        norm_path = os.path.normpath(folder_path)
+
+        if create_if_missing:
+            try:
+                os.makedirs(norm_path, exist_ok=True)
+            except Exception as e:
+                return False, f"Не удалось создать директорию:\n{e}"
+
+        try:
             if platform.system() == "Windows":
-                os.startfile(os.path.normpath(folder_path))
-                return True, f"Папка открыта в Explorer:\n{folder_path}"
+                # subprocess.Popen не блокирует выполнение программы и не ждёт ответа сети
+                subprocess.Popen(['explorer.exe', norm_path])
+                return True, f"Папка открыта в Explorer:\n{norm_path}"
             else:
-                subprocess.Popen(['explorer', os.path.normpath(folder_path)])
-                return True, f"Запущена команда открытия:\n{folder_path}"
-        except Exception as e:
-            return False, f"Не удалось открыть папку в Explorer:\n{e}"
+                subprocess.Popen(['xdg-open', norm_path])
+                return True, f"Папка открыта:\n{norm_path}"
+        except Exception:
+            try:
+                os.startfile(norm_path)
+                return True, f"Папка открыта:\n{norm_path}"
+            except Exception as ex:
+                return False, f"Не удалось открыть папку:\n{ex}"
+
+    def resolve_equipment_photo(self, equipment_dict):
+        """
+        Ищет фотографию станка (main.jpg) в подпапке 'Фото' оборудования.
+        Выполняется в фоновом потоке PhotoLoaderThread, не блокируя работу интерфейса.
+        """
+        base_path, _ = self.get_base_archive_path()
+        sub_folder = self._normalize_folder_path_value(
+            equipment_dict.get('folder_path'),
+            equipment_dict.get('sub_folder')
+        )
+        if not sub_folder:
+            return False, None, None, "Папка оборудования не определена"
+
+        norm_folder = self._build_full_folder_path(base_path, sub_folder)
+        default_photo_folder = os.path.join(norm_folder, "Фото")
+        default_photo_path = os.path.join(default_photo_folder, "main.jpg")
+
+        # 1. Быстрая прямая проверка: стандартный файл Фото/main.jpg
+        try:
+            if os.path.isfile(default_photo_path):
+                return True, default_photo_path, default_photo_folder, "Фотография найдена"
+        except Exception:
+            pass
+
+        # 2. Быстрая прямая проверка расширений без сканирования папок
+        for ext in (".jpeg", ".png", ".JPG", ".JPEG", ".PNG"):
+            candidate = os.path.join(default_photo_folder, f"main{ext}")
+            try:
+                if os.path.isfile(candidate):
+                    return True, candidate, default_photo_folder, "Фотография найдена"
+            except Exception:
+                pass
+
+        # 3. Проверка латинской подпапки 'photo'
+        try:
+            alt_photo_folder = os.path.join(norm_folder, "photo")
+            for ext in (".jpg", ".jpeg", ".png", ".JPG"):
+                candidate = os.path.join(alt_photo_folder, f"main{ext}")
+                if os.path.isfile(candidate):
+                    return True, candidate, alt_photo_folder, "Фотография найдена"
+        except Exception:
+            pass
+
+        # 4. Проверка main.jpg в корне папки станка (если нет подпапки Фото)
+        try:
+            root_main = os.path.join(norm_folder, "main.jpg")
+            if os.path.isfile(root_main):
+                return True, root_main, norm_folder, "Фотография найдена"
+        except Exception:
+            pass
+
+        return False, default_photo_path, default_photo_folder, "Файл main.jpg не найден"

@@ -71,9 +71,9 @@ class SchemaCompatibilityTests(unittest.TestCase):
             os.makedirs(target_path)
 
             router = FolderRouter({
+                'unc_path': base_path,
+                'unc_path_alt': '',
                 'network_drive_path': base_path,
-                'unc_path': '\\\\100.76.39.21\\Share_folder',
-                'unc_path_alt': '\\\\192.168.1.68\\Share_folder',
                 'fallback_local_path': '',
                 'path_mode': 1,
             })
@@ -90,6 +90,59 @@ class SchemaCompatibilityTests(unittest.TestCase):
             self.assertTrue(found)
             self.assertEqual(resolved_path, target_path)
             self.assertIn('Папка найдена', message)
+
+    def test_resolve_equipment_folder_handles_new_archive_overlap(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_archive_path = os.path.join(tmpdir, 'New Archive')
+            os.makedirs(os.path.join(base_archive_path, 'Цех 04'))
+            target_path = os.path.join(base_archive_path, 'Цех 04', '2673_Резьбонакатной станок PEE-WEE UPW 24SPS')
+            os.makedirs(target_path)
+
+            router = FolderRouter({
+                'unc_path': base_archive_path,
+                'unc_path_alt': '',
+                'network_drive_path': base_archive_path,
+                'fallback_local_path': '',
+                'path_mode': 1,
+            })
+
+            equipment = {
+                'inventory_number': 2673,
+                'name': 'Резьбонакатной станок PEE-WEE UPW 24SPS',
+                'folder_path': 'New Archive\\Цех 04\\2673_Резьбонакатной станок PEE-WEE UPW 24SPS',
+                'workshop_name': 'Цех 04',
+            }
+
+            found, resolved_path, message = router.resolve_equipment_folder(equipment)
+            self.assertTrue(found)
+            self.assertEqual(resolved_path, target_path)
+            self.assertIn('Папка найдена', message)
+
+    def test_resolve_equipment_folder_missing_folder_preserves_full_subfolder_structure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_share_path = os.path.join(tmpdir, 'Share_folder')
+            os.makedirs(base_share_path)
+
+            router = FolderRouter({
+                'unc_path': base_share_path,
+                'unc_path_alt': '',
+                'network_drive_path': base_share_path,
+                'fallback_local_path': '',
+                'path_mode': 1,
+            })
+
+            equipment = {
+                'inventory_number': 1895,
+                'name': 'Электроэрозионный проволочно-вырезной станок GF AgieCharmilles ROBОFIL 240 SLP',
+                'folder_path': 'New Archive\\Цех 02 (ЗСКА)\\1895_Электроэрозионный проволочно-вырезной станок GF AgieCharmilles ROBОFIL 240 SLP',
+                'workshop_name': 'Цех 02 (ЗСКА)',
+            }
+
+            found, resolved_path, message = router.resolve_equipment_folder(equipment)
+            self.assertFalse(found)
+            expected = os.path.join(base_share_path, 'New Archive', 'Цех 02 (ЗСКА)', '1895_Электроэрозионный проволочно-вырезной станок GF AgieCharmilles ROBОFIL 240 SLP')
+            self.assertEqual(resolved_path, expected)
+            self.assertIn('еще не создана', message)
 
     def test_maintenance_datetime_formatting(self):
         from ui.detail_card_dialog import DetailCardDialog

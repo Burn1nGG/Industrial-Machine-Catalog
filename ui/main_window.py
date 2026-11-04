@@ -8,21 +8,24 @@ from PySide6.QtWidgets import (
     QHeaderView, QFrame, QMessageBox, QStatusBar
 )
 from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QFont
 
 from db_manager import DatabaseManager
 from folder_router import FolderRouter
 from ui.db_settings_dialog import DBSettingsDialog
 from ui.detail_card_dialog import DetailCardDialog
+from ui.all_maintenance_dialog import AllMaintenanceDialog
+from ui.login_dialog import LoginDialog
 from ui.styles import STYLESHEET
 
 TABLE_COLUMNS = [
-    {"title": "Инв. №", "width": 85, "sortable": True},
-    {"title": "Наименование станка", "width": 480, "sortable": True},
-    {"title": "Цех", "width": 90, "sortable": True},
-    {"title": "ЧПУ / Контроллер", "width": 160, "sortable": True},
-    {"title": "IP-адрес", "width": 125, "sortable": True},
-    {"title": "Статус", "width": 115, "sortable": True},
-    {"title": "Быстрые действия", "width": 215, "sortable": False},
+    {"title": "Инв. №", "width": 80, "sortable": True},
+    {"title": "Наименование станка", "width": 460, "sortable": True},
+    {"title": "Цех", "width": 85, "sortable": True},
+    {"title": "ЧПУ / Контроллер", "width": 150, "sortable": True},
+    {"title": "IP-адрес", "width": 115, "sortable": True},
+    {"title": "Статус", "width": 105, "sortable": True},
+    {"title": "Действия", "width": 135, "sortable": False},
 ]
 
 class MainWindow(QMainWindow):
@@ -51,23 +54,22 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(16, 16, 16, 16)
-        main_layout.setSpacing(14)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(6)
 
-        # ---------------- 1. HEADER BAR ----------------
+        # ---------------- 1. COMPACT HEADER BAR ----------------
         header_frame = QFrame()
         header_frame.setObjectName("HeaderFrame")
         header_layout = QHBoxLayout(header_frame)
-        header_layout.setContentsMargins(12, 8, 12, 8)
+        header_layout.setContentsMargins(10, 4, 10, 4)
+        header_layout.setSpacing(8)
 
-        # App Logo & Title
-        title_box = QVBoxLayout()
-        title_lbl = QLabel("🏭 Справочник Промышленного Оборудования")
+        # App Logo & Title (compact single line)
+        title_box = QHBoxLayout()
+        title_box.setSpacing(6)
+        title_lbl = QLabel("🏭 Справочник оборудования")
         title_lbl.setObjectName("AppTitle")
-        subtitle_lbl = QLabel("Быстрый поиск станков, просмотр карточек и открытие папок по сети (S: для удалённого доступа / \\Synology_DS423\\Share_folder для локальной сети)")
-        subtitle_lbl.setObjectName("AppSubTitle")
         title_box.addWidget(title_lbl)
-        title_box.addWidget(subtitle_lbl)
 
         header_layout.addLayout(title_box)
         header_layout.addStretch()
@@ -75,91 +77,111 @@ class MainWindow(QMainWindow):
         # Database connection status pill
         self.db_status_pill = QLabel("Подключение: PostgreSQL")
         self.db_status_pill.setObjectName("StatusPillWork")
+        self.db_status_pill.setFixedHeight(26)
         header_layout.addWidget(self.db_status_pill)
 
+        # Enterprise Maintenance Log Button
+        self.btn_all_maint = QPushButton("🛠 История обслуживания")
+        self.btn_all_maint.setObjectName("CardButton")
+        self.btn_all_maint.setFixedHeight(28)
+        self.btn_all_maint.setStyleSheet("font-size: 12px; padding: 4px 12px;")
+        self.btn_all_maint.setToolTip("Открыть сводный журнал обслуживания и неисправностей всего оборудования")
+        self.btn_all_maint.clicked.connect(self.open_all_maintenance_dialog)
+        header_layout.addWidget(self.btn_all_maint)
+
         # DB Settings Button
-        self.btn_settings = QPushButton("⚙ Настройки БД и Диска")
+        self.btn_settings = QPushButton("⚙ Настройки")
         self.btn_settings.setObjectName("SettingsButton")
+        self.btn_settings.setFixedHeight(28)
+        self.btn_settings.setStyleSheet("font-size: 12px; padding: 4px 12px;")
         self.btn_settings.clicked.connect(self.open_settings_dialog)
         header_layout.addWidget(self.btn_settings)
 
+        # Role & User Status Pill
+        self.auth_status_pill = QLabel("👁 Только чтение")
+        self.auth_status_pill.setObjectName("StatusPillViewer")
+        self.auth_status_pill.setFixedHeight(26)
+        header_layout.addWidget(self.auth_status_pill)
+
+        # Login / Logout Button
+        self.btn_auth = QPushButton("🔑 Войти")
+        self.btn_auth.setObjectName("AuthButton")
+        self.btn_auth.setFixedHeight(28)
+        self.btn_auth.setStyleSheet("font-size: 12px; padding: 4px 12px;")
+        self.btn_auth.setToolTip("Войти как редактор или администратор для изменения базы данных")
+        self.btn_auth.clicked.connect(self.on_auth_clicked)
+        header_layout.addWidget(self.btn_auth)
+
+        # Connect user state change
+        self.db_manager.auth_manager.user_changed.connect(self.on_user_changed)
+
         main_layout.addWidget(header_frame)
 
-        # ---------------- 2. SEARCH FILTERS CARD ----------------
+        # ---------------- 2. COMPACT SEARCH FILTERS ROW ----------------
         filter_frame = QFrame()
         filter_frame.setObjectName("FilterFrame")
-        filter_layout = QVBoxLayout(filter_frame)
+        filter_layout = QHBoxLayout(filter_frame)
+        filter_layout.setContentsMargins(6, 4, 6, 4)
+        filter_layout.setSpacing(6)
 
-        filter_title = QLabel("🔍 Фильтры поиска оборудования")
-        filter_title.setObjectName("FilterTitle")
-        filter_layout.addWidget(filter_title)
-
-        inputs_layout = QHBoxLayout()
-        inputs_layout.setSpacing(14)
-
-        # Input 1: Workshop Dropdown (Цех)
-        ws_box = QVBoxLayout()
-        ws_box.addWidget(QLabel("1. Выбрать цех:"))
+        # Workshop Dropdown (Цех)
+        ws_lbl = QLabel("Цех:")
+        ws_lbl.setStyleSheet("font-size: 11px; font-weight: 600; color: #94A3B8;")
         self.ws_combo = QComboBox()
         self.ws_combo.addItem("— Все цеха —", 0)
-        ws_box.addWidget(self.ws_combo)
-        inputs_layout.addLayout(ws_box, 2)
+        self.ws_combo.setFixedHeight(28)
+        self.ws_combo.setMinimumWidth(110)
+        filter_layout.addWidget(ws_lbl)
+        filter_layout.addWidget(self.ws_combo, 2)
 
-        # Input 2: Machine Number / Inventory Number (Номер станка)
-        num_box = QVBoxLayout()
-        num_box.addWidget(QLabel("2. Номер станка (Инвентарный / Серийный):"))
+        # Machine Number / Inventory Number
         self.num_input = QLineEdit()
-        self.num_input.setPlaceholderText("Например: INV-001042")
+        self.num_input.setPlaceholderText("Инв. / серийный номер...")
+        self.num_input.setFixedHeight(28)
+        self.num_input.setMinimumWidth(120)
         self.num_input.returnPressed.connect(self.on_search)
-        num_box.addWidget(self.num_input)
-        inputs_layout.addLayout(num_box, 2)
+        filter_layout.addWidget(self.num_input, 2)
 
-        # Input 3: Machine Name / Model (Название/модель станка)
-        name_box = QVBoxLayout()
-        name_box.addWidget(QLabel("3. Название / Модель станка / ЧПУ:"))
+        # Machine Name / Model
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Например: 1516Ф3 или DMG MORI")
+        self.name_input.setPlaceholderText("Название / модель станка / ЧПУ...")
+        self.name_input.setFixedHeight(28)
+        self.name_input.setMinimumWidth(160)
         self.name_input.returnPressed.connect(self.on_search)
-        name_box.addWidget(self.name_input)
-        inputs_layout.addLayout(name_box, 3)
+        filter_layout.addWidget(self.name_input, 3)
 
-        # Action Buttons for Search
-        btn_box = QHBoxLayout()
-        btn_box.setContentsMargins(0, 18, 0, 0)
-
-        self.btn_search = QPushButton("🔍 Выполнить поиск")
+        # Action Buttons
+        self.btn_search = QPushButton("🔍 Найти")
         self.btn_search.setObjectName("SearchButton")
+        self.btn_search.setFixedHeight(28)
+        self.btn_search.setStyleSheet("font-size: 12px; padding: 4px 14px;")
         self.btn_search.clicked.connect(self.on_search)
+        filter_layout.addWidget(self.btn_search)
 
-        self.btn_reset = QPushButton("🔄 Сбросить")
+        self.btn_reset = QPushButton("🔄 Сброс")
         self.btn_reset.setObjectName("ResetButton")
+        self.btn_reset.setFixedHeight(28)
+        self.btn_reset.setStyleSheet("font-size: 12px; padding: 4px 12px;")
         self.btn_reset.clicked.connect(self.on_reset)
-
-        btn_box.addWidget(self.btn_search)
-        btn_box.addWidget(self.btn_reset)
-        inputs_layout.addLayout(btn_box, 2)
-
-        filter_layout.addLayout(inputs_layout)
-        
-        # Hint label requirement
-        hint_lbl = QLabel("ℹ * Для поиска достаточно заполнить хотя бы одно из полей.")
-        hint_lbl.setStyleSheet("color: #64748B; font-size: 11px; margin-top: 4px;")
-        filter_layout.addWidget(hint_lbl)
+        filter_layout.addWidget(self.btn_reset)
 
         main_layout.addWidget(filter_frame)
 
-        # ---------------- 3. RESULTS TABLE SECTION ----------------
+        # ---------------- 3. HIGH-DENSITY RESULTS TABLE ----------------
         results_frame = QFrame()
         results_frame.setObjectName("ResultsFrame")
         results_layout = QVBoxLayout(results_frame)
+        results_layout.setContentsMargins(6, 4, 6, 4)
+        results_layout.setSpacing(4)
 
         # Summary Bar
         summary_layout = QHBoxLayout()
+        summary_layout.setContentsMargins(4, 0, 4, 0)
         self.results_count_lbl = QLabel("Найдено оборудования: 0 шт.")
-        self.results_count_lbl.setStyleSheet("font-size: 14px; font-weight: bold; color: #F8FAFC;")
+        self.results_count_lbl.setStyleSheet("font-size: 12px; font-weight: bold; color: #F8FAFC;")
         
-        summary_hint = QLabel("💡 Двойной клик по строке открывает карточку станка")
-        summary_hint.setStyleSheet("font-size: 12px; color: #94A3B8; font-style: italic;")
+        summary_hint = QLabel("💡 Двойной клик открывает карточку станка")
+        summary_hint.setStyleSheet("font-size: 11px; color: #94A3B8; font-style: italic;")
 
         summary_layout.addWidget(self.results_count_lbl)
         summary_layout.addStretch()
@@ -168,14 +190,21 @@ class MainWindow(QMainWindow):
 
         # Table Widget
         self.table = QTableWidget()
+        self.table.setObjectName("EquipmentTable")
         self.table.setColumnCount(len(TABLE_COLUMNS))
+
+        tbl_font = QFont()
+        tbl_font.setPointSize(9)
+        self.table.setFont(tbl_font)
+
         self._update_header_labels()
 
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setMinimumSectionSize(70)
+        header.setMinimumSectionSize(50)
         header.setStretchLastSection(False)
         header.setHighlightSections(True)
+        header.setDefaultSectionSize(100)
 
         for idx, col_info in enumerate(TABLE_COLUMNS):
             self.table.setColumnWidth(idx, col_info["width"])
@@ -184,7 +213,9 @@ class MainWindow(QMainWindow):
 
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.verticalHeader().setDefaultSectionSize(46)
+        # High-density rows (26px) allows viewing 20-30 rows at once
+        self.table.verticalHeader().setDefaultSectionSize(26)
+        self.table.verticalHeader().setVisible(False)
         self.table.cellDoubleClicked.connect(self.on_table_double_clicked)
         header.sectionClicked.connect(self.on_header_clicked)
         header.setSortIndicatorShown(False)
@@ -332,15 +363,20 @@ class MainWindow(QMainWindow):
 
             # Columns
             inv_item = QTableWidgetItem(str(eq.get('inventory_number', '')))
+            inv_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             inv_item.setData(Qt.ItemDataRole.UserRole, eq)
 
             name_item = QTableWidgetItem(str(eq.get('name', '')))
             ws_item = QTableWidgetItem(str(eq.get('workshop_name', eq.get('workshop_code', '-'))))
+            ws_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
             cnc_item = QTableWidgetItem(str(eq.get('cnc_controller', '-')))
             ip_item = QTableWidgetItem(str(eq.get('ip_address', '-')))
+            ip_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
             status = eq.get('status', 'В работе')
             status_item = QTableWidgetItem(status)
+            status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
             self.table.setItem(row_idx, 0, inv_item)
             self.table.setItem(row_idx, 1, name_item)
@@ -349,20 +385,24 @@ class MainWindow(QMainWindow):
             self.table.setItem(row_idx, 4, ip_item)
             self.table.setItem(row_idx, 5, status_item)
 
-            # Action cell: 2 buttons (Folder, Card)
+            # Action cell: 2 compact buttons (Folder, Card)
             action_widget = QWidget()
             action_layout = QHBoxLayout(action_widget)
-            action_layout.setContentsMargins(4, 2, 4, 2)
-            action_layout.setSpacing(6)
+            action_layout.setContentsMargins(2, 1, 2, 1)
+            action_layout.setSpacing(4)
 
-            btn_folder = QPushButton("📁 Папка")
+            btn_folder = QPushButton("📁")
             btn_folder.setObjectName("FolderButton")
             btn_folder.setToolTip("Открыть папку станка в Windows Explorer")
+            btn_folder.setFixedSize(26, 20)
+            btn_folder.setStyleSheet("font-size: 11px; padding: 0px;")
             btn_folder.clicked.connect(lambda checked=False, eq_data=eq: self.open_equipment_folder(eq_data))
 
             btn_card = QPushButton("🛈 Карточка")
             btn_card.setObjectName("CardButton")
             btn_card.setToolTip("Просмотреть подробную техническую карточку станка")
+            btn_card.setFixedHeight(20)
+            btn_card.setStyleSheet("font-size: 11px; padding: 1px 6px;")
             btn_card.clicked.connect(lambda checked=False, eq_data=eq: self.open_equipment_card(eq_data))
 
             action_layout.addWidget(btn_folder)
@@ -414,23 +454,9 @@ class MainWindow(QMainWindow):
 
     def open_equipment_folder(self, eq_data):
         found, path, msg = self.folder_router.resolve_equipment_folder(eq_data)
-        success, open_msg = self.folder_router.open_folder_in_explorer(path, create_if_missing=False)
-        if success:
-            self.update_status_bar(f"Папка открыта: {path}")
-        else:
-            reply = QMessageBox.question(
-                self,
-                "Папка станка не найдена",
-                f"{open_msg}\n\nСоздать новую папку по адресу:\n{path}?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            if reply == QMessageBox.StandardButton.Yes:
-                ok, c_msg = self.folder_router.open_folder_in_explorer(path, create_if_missing=True)
-                if ok:
-                    QMessageBox.information(self, "Создано", f"Папка создана:\n{path}")
-                    self.update_status_bar(f"Папка создана и открыта: {path}")
-                else:
-                    QMessageBox.critical(self, "Ошибка", c_msg)
+        if path:
+            self.folder_router.open_folder_in_explorer(path)
+            self.update_status_bar(f"Папка открыта в проводнике: {path}")
 
     def open_equipment_card(self, eq_data):
         dialog = DetailCardDialog(eq_data, self.db_manager, self.folder_router, self)
@@ -444,6 +470,47 @@ class MainWindow(QMainWindow):
         if dialog.exec() == DBSettingsDialog.DialogCode.Accepted:
             self.load_workshops()
             self.on_search()
+
+    def on_auth_clicked(self):
+        if self.db_manager.auth_manager.is_authenticated():
+            reply = QMessageBox.question(
+                self,
+                "Выход из системы",
+                "Вы уверены, что хотите выйти из учётной записи и перейти в режим только для чтения?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.db_manager.auth_manager.logout()
+                self.update_status_bar("Выполнен выход. Включен режим только для чтения.")
+        else:
+            dlg = LoginDialog(self.db_manager.auth_manager, self)
+            if dlg.exec() == LoginDialog.DialogCode.Accepted:
+                self.update_status_bar(f"Авторизован: {self.db_manager.auth_manager.get_display_name()}")
+
+    def on_user_changed(self, user):
+        if user:
+            self.auth_status_pill.setText(f"👤 {self.db_manager.auth_manager.get_display_name()}")
+            self.auth_status_pill.setObjectName("StatusPillUser")
+            self.btn_auth.setText("🚪 Выйти")
+            self.btn_auth.setObjectName("LogoutButton")
+            self.btn_auth.setToolTip("Выйти из учётной записи (перейти в режим только для чтения)")
+        else:
+            self.auth_status_pill.setText("👁 Только чтение")
+            self.auth_status_pill.setObjectName("StatusPillViewer")
+            self.btn_auth.setText("🔑 Войти")
+            self.btn_auth.setObjectName("AuthButton")
+            self.btn_auth.setToolTip("Войти как редактор или администратор для изменения базы данных")
+
+        self.auth_status_pill.style().unpolish(self.auth_status_pill)
+        self.auth_status_pill.style().polish(self.auth_status_pill)
+        self.btn_auth.style().unpolish(self.btn_auth)
+        self.btn_auth.style().polish(self.btn_auth)
+
+    def open_all_maintenance_dialog(self):
+        dialog = AllMaintenanceDialog(self.db_manager, self.folder_router, self)
+        dialog.setWindowState(Qt.WindowState.WindowMaximized)
+        dialog.exec()
+        self.on_search()
 
     def update_status_bar(self, message):
         base_path, storage_desc = self.folder_router.get_base_archive_path()

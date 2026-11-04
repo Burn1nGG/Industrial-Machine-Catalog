@@ -7,7 +7,12 @@ import json
 import psycopg2
 
 def load_config():
-    config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
+    try:
+        from db_manager import get_config_path
+        config_path = get_config_path()
+    except Exception:
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.json')
+
     if os.path.exists(config_path):
         with open(config_path, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -15,7 +20,7 @@ def load_config():
         "db": {
             "host": "localhost",
             "port": 5432,
-            "dbname": "equipment_db",
+            "dbname": "postgres",
             "user": "postgres",
             "password": "superuser"
         }
@@ -25,8 +30,14 @@ def init_database(db_config=None):
     if db_config is None:
         db_config = load_config().get("db", {})
     
-    base_dir = os.path.dirname(__file__)
+    if getattr(sys, 'frozen', False):
+        base_dir = os.path.join(getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__))), 'database')
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
     schema_path = os.path.join(base_dir, 'schema.sql')
+    if not os.path.exists(schema_path):
+        schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'schema.sql')
     seed_path = os.path.join(base_dir, 'seed_data.sql')
 
     print(f"Connecting to PostgreSQL at {db_config.get('host')}:{db_config.get('port')} DB: {db_config.get('dbname')}...")
@@ -35,9 +46,9 @@ def init_database(db_config=None):
         conn = psycopg2.connect(
             host=db_config.get('host', 'localhost'),
             port=db_config.get('port', 5432),
-            dbname=db_config.get('dbname', 'equipment_db'),
+            dbname=db_config.get('dbname', 'postgres'),
             user=db_config.get('user', 'postgres'),
-            password=db_config.get('password', ''),
+            password=db_config.get('password', 'superuser'),
             connect_timeout=5
         )
         conn.autocommit = True

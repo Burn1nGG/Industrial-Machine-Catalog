@@ -121,8 +121,11 @@ CREATE TABLE IF NOT EXISTS equipment.machine_maintenance (
 
 
 -- ============================================================
--- 6. Индексы
+-- 6. Индексы и расширения для высокой скорости поиска
 -- ============================================================
+
+-- Включаем модуль триграмм для быстрого поиска ILIKE по подстрокам
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE INDEX IF NOT EXISTS idx_machines_workshop_id
     ON equipment.machines(workshop_id);
@@ -133,5 +136,68 @@ CREATE INDEX IF NOT EXISTS idx_machines_inventory_number
 CREATE INDEX IF NOT EXISTS idx_machines_machine_name
     ON equipment.machines(machine_name);
 
-CREATE INDEX IF NOT EXISTS idx_machine_maintenance_machine_id
-    ON equipment.machine_maintenance(machine_id);
+-- GIN триграммные индексы для мгновенного поиска по подстроке (ILIKE '%...%')
+CREATE INDEX IF NOT EXISTS idx_machines_machine_name_trgm
+    ON equipment.machines USING gin (machine_name gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_machines_controller_trgm
+    ON equipment.machines USING gin (controller gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_machines_inventory_number_trgm
+    ON equipment.machines USING gin ((inventory_number::text) gin_trgm_ops);
+
+-- Составной индекс для быстрой выборки истории обслуживания оборудования
+CREATE INDEX IF NOT EXISTS idx_machine_maintenance_machine_date
+    ON equipment.machine_maintenance (machine_id, start_date DESC NULLS LAST, id DESC);
+
+
+-- ============================================================
+-- 7. Представления (Views) для оптимизации запросов
+-- ============================================================
+
+CREATE OR REPLACE VIEW equipment.v_machines_full AS
+SELECT
+    m.id,
+    m.inventory_number,
+    m.machine_name,
+    m.machine_name AS name,
+    m.workshop_id,
+    w.name AS workshop_name,
+    w.description AS workshop_description,
+    m.folder_path,
+    m.folder_path AS sub_folder,
+    m.controller,
+    m.status,
+    m.commissioning_year,
+    m.commissioning_year AS year_built,
+    cs.ip_address,
+    cs.mac_address,
+    cs.screen,
+    cs.processor,
+    cs.ram,
+    cs.rom,
+    cs.operating_system,
+    cs.antivirus,
+    m.created_at,
+    m.updated_at
+FROM equipment.machines m
+LEFT JOIN equipment.workshops w ON w.id = m.workshop_id
+LEFT JOIN equipment.computer_specs cs ON cs.machine_id = m.id;
+
+
+-- ============================================================
+-- 8. Таблица пользователей и прав доступа
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS equipment.users (
+    id BIGSERIAL PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    full_name VARCHAR(150),
+    role VARCHAR(20) NOT NULL DEFAULT 'viewer', -- 'admin', 'editor', 'viewer'
+    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_username ON equipment.users(username);
+
+

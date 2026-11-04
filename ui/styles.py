@@ -16,22 +16,29 @@ QWidget {
 #HeaderFrame {
     background-color: #1E293B;
     border-bottom: 1px solid #334155;
-    padding: 12px;
+    padding: 6px 12px;
 }
 
 #AppTitle {
-    font-size: 20px;
+    font-size: 16px;
     font-weight: bold;
     color: #38BDF8;
 }
 
 #AppSubTitle {
-    font-size: 12px;
+    font-size: 11px;
     color: #94A3B8;
 }
 
 /* --- CARDS & FRAMES --- */
-#FilterFrame, #ResultsFrame, #CardContentFrame {
+#FilterFrame, #ResultsFrame {
+    background-color: #1E293B;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 6px 10px;
+}
+
+#CardContentFrame {
     background-color: #1E293B;
     border: 1px solid #334155;
     border-radius: 8px;
@@ -39,7 +46,7 @@ QWidget {
 }
 
 #FilterTitle {
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 600;
     color: #F1F5F9;
 }
@@ -156,6 +163,27 @@ QPushButton#DeleteButton:hover {
     background-color: #B91C1C;
 }
 
+QPushButton#AuthButton {
+    background-color: #0284C7;
+    color: #FFFFFF;
+    font-weight: 600;
+}
+
+QPushButton#AuthButton:hover {
+    background-color: #0369A1;
+}
+
+QPushButton#LogoutButton {
+    background-color: #334155;
+    color: #CBD5E1;
+    font-weight: 600;
+}
+
+QPushButton#LogoutButton:hover {
+    background-color: #475569;
+    color: #F8FAFC;
+}
+
 /* --- TABLE WIDGET --- */
 QTableWidget {
     background-color: #0F172A;
@@ -165,7 +193,7 @@ QTableWidget {
 }
 
 QTableWidget::item {
-    padding: 8px;
+    padding: 6px;
     border-bottom: 1px solid #1E293B;
 }
 
@@ -174,10 +202,31 @@ QTableWidget::item:selected {
     color: #38BDF8;
 }
 
+/* Compact Tables: EquipmentTable & MaintCompactTable */
+QTableWidget#EquipmentTable, QTableWidget#MaintCompactTable {
+    background-color: #0F172A;
+    border: 1px solid #334155;
+    gridline-color: #1E293B;
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+QTableWidget#EquipmentTable::item, QTableWidget#MaintCompactTable::item {
+    padding: 2px 4px;
+    border-bottom: 1px solid #1E293B;
+    font-size: 11px;
+}
+
+QTableWidget#EquipmentTable::item:selected, QTableWidget#MaintCompactTable::item:selected {
+    background-color: #1E293B;
+    color: #38BDF8;
+}
+
 QHeaderView::section {
     background-color: #1E293B;
     color: #94A3B8;
-    padding: 8px 10px;
+    padding: 3px 6px;
+    font-size: 11px;
     font-weight: 600;
     border: none;
     border-right: 1px solid #334155;
@@ -259,6 +308,24 @@ QLabel#StatusPillDecomm {
     font-weight: bold;
 }
 
+QLabel#StatusPillUser {
+    background-color: #064E3B;
+    color: #6EE7B7;
+    border: 1px solid #059669;
+    border-radius: 12px;
+    padding: 3px 10px;
+    font-weight: bold;
+}
+
+QLabel#StatusPillViewer {
+    background-color: #1E293B;
+    color: #94A3B8;
+    border: 1px solid #475569;
+    border-radius: 12px;
+    padding: 3px 10px;
+    font-weight: bold;
+}
+
 /* --- STATUS BAR --- */
 QStatusBar {
     background-color: #090D16;
@@ -307,4 +374,77 @@ QTextEdit#MaintDetailText {
     line-height: 1.4;
     padding: 8px;
 }
+
+/* --- PHOTO DISPLAY & PLACEHOLDER --- */
+#PhotoCardFrame {
+    background-color: #162032;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+#PhotoImageLabel {
+    background-color: #0B1120;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 4px;
+}
+
+#PhotoImageLabel:hover {
+    border: 1px solid #38BDF8;
+}
+
+#PhotoPlaceholderFrame {
+    background-color: #0B1120;
+    border: 2px dashed #334155;
+    border-radius: 8px;
+    padding: 16px;
+}
+
+#PhotoPlaceholderFrame:hover {
+    border-color: #475569;
+}
+
+#PhotoPlaceholderIcon {
+    font-size: 40px;
+    color: #475569;
+}
+
+#PhotoPlaceholderTitle {
+    font-size: 15px;
+    font-weight: bold;
+    color: #94A3B8;
+}
+
+#PhotoPlaceholderDesc {
+    font-size: 12px;
+    color: #64748B;
+}
+
+#PhotoPathBox {
+    background-color: #0F172A;
+    border: 1px solid #1E293B;
+    border-radius: 4px;
+    padding: 6px 8px;
+    color: #94A3B8;
+    font-size: 11px;
+    font-family: 'Consolas', 'Courier New', monospace;
+}
+
+QPushButton#PhotoActionButton {
+    background-color: #1E293B;
+    border: 1px solid #475569;
+    color: #E2E8F0;
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 5px;
+    font-weight: 500;
+}
+
+QPushButton#PhotoActionButton:hover {
+    background-color: #334155;
+    color: #FFFFFF;
+    border-color: #38BDF8;
+}
 """
+

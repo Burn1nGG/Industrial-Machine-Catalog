@@ -55,21 +55,22 @@ class DBSettingsDialog(QDialog):
         storage_layout = QFormLayout(storage_group)
 
         curr_storage = self.db_manager.config.get("storage", {})
+        self.unc_input = QLineEdit(curr_storage.get("unc_path", "\\\\Synology_DS423\\Share_folder"))
+        self.unc_alt_input = QLineEdit(curr_storage.get("unc_path_alt", "\\\\100.76.39.21\\Share_folder"))
         self.drive_input = QLineEdit(curr_storage.get("network_drive_path", "S:\\New Archive"))
-        self.unc_input = QLineEdit(curr_storage.get("unc_path", "\\\\100.76.39.21\\Share_folder"))
-        self.unc_alt_input = QLineEdit(curr_storage.get("unc_path_alt", "\\\\192.168.1.68\\Share_folder"))
         self.fallback_input = QLineEdit(curr_storage.get("fallback_local_path", ""))
         self.fallback_input.setPlaceholderText("Опционально: C:\\Equipment_Archive_Backup")
         self.path_mode_combo = QComboBox()
-        self.path_mode_combo.addItem("100.76.39.21 / Share_folder", 1)
-        self.path_mode_combo.addItem("192.168.1.68 / Share_folder", 2)
-        self.path_mode_combo.setCurrentIndex(int(curr_storage.get("path_mode", 1)) - 1)
+        self.path_mode_combo.addItem("Synology_DS423 (Локальная сеть)", 1)
+        self.path_mode_combo.addItem("Удалённый архив 100.76.39.21 (VPN / Диск S:)", 2)
+        mode_idx = 0 if int(curr_storage.get("path_mode", 1)) == 1 else 1
+        self.path_mode_combo.setCurrentIndex(mode_idx)
 
+        storage_layout.addRow("Сетевое имя (Synology_DS423):", self.unc_input)
+        storage_layout.addRow("Удалённый UNC (100.76.39.21):", self.unc_alt_input)
         storage_layout.addRow("Сетевой диск (S:):", self.drive_input)
-        storage_layout.addRow("UNC путь №1:", self.unc_input)
-        storage_layout.addRow("UNC путь №2:", self.unc_alt_input)
-        storage_layout.addRow("Режим открытия папок:", self.path_mode_combo)
-        storage_layout.addRow("Резервная папка:", self.fallback_input)
+        storage_layout.addRow("Режим подключения:", self.path_mode_combo)
+        storage_layout.addRow("Резервная локальная папка:", self.fallback_input)
 
         layout.addWidget(storage_group)
 
@@ -78,6 +79,12 @@ class DBSettingsDialog(QDialog):
         self.status_label.setWordWrap(True)
         self.status_label.setStyleSheet("font-weight: bold; padding: 4px;")
         layout.addWidget(self.status_label)
+
+        # Config file path label
+        self.config_path_label = QLabel(f"Файл настроек: {self.db_manager.config_file}")
+        self.config_path_label.setStyleSheet("color: #94A3B8; font-size: 11px; padding: 2px;")
+        self.config_path_label.setWordWrap(True)
+        layout.addWidget(self.config_path_label)
 
         # Action Buttons Layout
         btn_layout = QHBoxLayout()
@@ -157,7 +164,17 @@ class DBSettingsDialog(QDialog):
         cfg = self.get_form_config()
         if self.db_manager.save_config(cfg):
             self.folder_router.config = cfg["storage"]
-            QMessageBox.information(self, "Сохранено", "Настройки успешно сохранены!")
+            self.folder_router._cached_base_path = None
+            self.folder_router._cached_desc = None
+            QMessageBox.information(
+                self,
+                "Сохранено",
+                f"Настройки успешно сохранены в:\n{self.db_manager.config_file}"
+            )
             self.accept()
         else:
-            QMessageBox.critical(self, "Ошибка", "Не удалось сохранить файл конфигурации config.json")
+            QMessageBox.critical(
+                self,
+                "Ошибка",
+                f"Не удалось сохранить файл конфигурации:\n{self.db_manager.config_file}"
+            )
